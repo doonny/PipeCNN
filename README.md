@@ -208,7 +208,7 @@ Configuration of different CNN models is done by a header file located in *host/
 ## Citation
 Please kindly cite our work of PipeCNN if it helps your research:
 ```
-Dong Wang, Jiangjing An and Ke Xu, “PipeCNN: An OpenCL-Based FPGA Accelerator for Large-Scale Convolution Neuron Networks”, , 2016.
+Dong Wang, Jiangjing An and Ke Xu, “PipeCNN: An OpenCL-Based FPGA Accelerator for Large-Scale Convolution Neuron Networks”, https://arxiv.org/abs/1611.02450, 2016.
 ```
 
 
