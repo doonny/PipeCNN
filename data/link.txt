@@ -1,0 +1,5 @@
+You can download image, weight and golden ref data for AlexNet from Baidu's Cloud Drive as an good example:
+
+http://pan.baidu.com/s/1o7Bse4i
+
+Remembering put the binary data file into folder "data_alex"
