@@ -200,7 +200,7 @@ Configuration of a new implementation with different performance and hardware re
 to appropriate ones. The default setting is VEC_SIZE=8, LANE_NUM=16, which achieves the shortest classification time on the DE5-net board.
 
 Configuration of different CNN models is done by a header file located in *host/layer_config.h*. Select one of the model configurations provided and recompile the host before running the test. Currently, the following models have been tested:
-* AlexNet
+* AlexNet (CaffeNet)
 * Vgg-16
 
 
