@@ -204,6 +204,12 @@ Configuration of different CNN models is done by a header file located in *host/
 * Vgg-16
 
 
+## Update Plans
+* fixed-point (8/16-bit) implementation with at least 4x performance improvements (around May-15)
+* optimizations for DE1-soc (Cyclone-V) targeting 20 fps of AlexNet (around end of June)
+* implementation of Faster-RCNN (end of August)
+* optimizations for DE5a-net (Arria-10) targeting 500 fps of AlexNet (end of July)
+
 
 ## Citation
 Please kindly cite our work of PipeCNN if it helps your research:
