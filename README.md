@@ -28,7 +28,7 @@ Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-so
 
 |Platform|Performance|Speed|CNN Model|DSP Consumed|
 |:-|:-:|:-:|:-:|:-:|
-|Stratix-V A7    |133.2 GOP/s|25 fps  |AlexNet|  256|
+|Stratix-V A7    |--         |--      |AlexNet|   --|
 |Arria-10 1150   |--         |--      |AlexNet|   --|
 |Cyclone-V SEA5  |--         |--      |AlexNet|   --|
 |Cyclone-V SXC6  |--         |--      |AlexNet|   --|
