@@ -8,12 +8,12 @@ cycle by automatically synthesizing an algorithm in high-level languages (e.g. C
 
 ## How to Use
 
-First, download the pre-trained CNN models, input test vectors and golden reference files from PipeCNN's own [ModelZoo](https://github.com/doonny/PipeCNN/data). Place the data in the correct folder. Compile the project by using the Makefile provided. After finishing the compilation, simply type the following command to run PipeCNN:
+First, download the pre-trained CNN models, input test vectors and golden reference files from PipeCNN's own [ModelZoo](https://github.com/doonny/PipeCNN/tree/master/data). Place the data in the correct folder. Compile the project by using the Makefile provided. After finishing the compilation, simply type the following command to run PipeCNN:
 ```
 ./run.exe conv.aocx
 ```
 For users who are using Xilinx's SDx environments, it is recommended to use the IDE instead of makefiles.
-For more detailed user instructions, please refer to the [docs](https://github.com/doonny/PipeCNN/doccuments).
+For more detailed user instructions, please refer to the [docs](https://github.com/doonny/PipeCNN/tree/master/documents).
 
 ## Boards and Performances
 Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) and [SDSoc](https://www.xilinx.com/products/design-tools/software-zone/sdsoc.html) development environments v2017.1 are used. PipeCNN has been tested on the following FPGA boards/platforms, and the achieved performances are reported in Table-I.
