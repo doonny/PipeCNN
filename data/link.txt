@@ -1,7 +1,14 @@
-You can download image, weight and golden ref data for AlexNet from Baidu's Cloud Drive or Google drive as an good example:
+You can download the CNN weight, input test vector, output golden ref data for AlexNet/VGG-16 from the following links to test and evaluate the project:
 
-http://pan.baidu.com/s/1o7Bse4i
+* Baidu's Cloud Drive:
+
+http://pan.baidu.com/s/1jIl6qkm
+
+* GoogleDrive:
 
 https://drive.google.com/open?id=0B3srpZY5rHcASEhSSmh3Tm5LclU
 
-Remembering put the binary data file into folder "data_alex"
+
+Note:
+
+Remember to change the corresponding paths in "main.cpp" before running the project.
