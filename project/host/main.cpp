@@ -28,14 +28,15 @@
 using namespace std;
 using namespace ocl_util;
 
+typedef  char  DTYPE;
+
 //----------- Design Parameters --------------//
 // select what platform is used
 //const char *vendor_name = "Xilinx";
-const char *vendor_name = "Altera";
-#define DEVICE_TYPE CL_DEVICE_TYPE_ACCELERATOR
-
+//const char *vendor_name = "Altera";
 //const char *vendor_name = "AMD";
-//const char *vendor_name = "Intel";
+const char *vendor_name = "Intel";
+#define DEVICE_TYPE CL_DEVICE_TYPE_ACCELERATOR
 //#define DEVICE_TYPE CL_DEVICE_TYPE_GPU
 
 // SW System parameters
@@ -47,34 +48,63 @@ const char *vendor_name = "Altera";
 #define OUT_BUF_SIZE   256*256*64
 #define FC_BUF_SIZE    32768*MAX_BATCH_SIZE
 
+/*
+// Test FC only
+// Original problem size
+// File size is in num of DTYPE numbers
+#define IMAGE_FILE_SIZE   (4096*4096)//(227*227*3)
+//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
+#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
+#define LAYER_NUM         3
+
+const char *weight_file_path = "../host/data/data_alex/weights.dat";
+const char *input_file_path = "../host/data/data_alex/image.dat";
+const char *ref_file_path = "../host/data/data_alex/fc8.dat";
+const char *dump_file_path = "./result_dump.txt";
+*/
+
+/*
+// Test CONV only
+// Original problem size
+// File size is in num of DTYPE numbers
+#define IMAGE_FILE_SIZE   (227*227*3)
+//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
+#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
+#define LAYER_NUM         2
+
+const char *weight_file_path = "../host/data/data_alex/weights.dat";
+const char *input_file_path = "../host/data/data_alex/image.dat";
+const char *ref_file_path = "../host/data/data_alex/pool2.dat";
+const char *dump_file_path = "./result_dump.txt";
+*/
 
 
 // AlexNet
 // Original problem size
-// File size is in num of float numbers
+// File size is in num of DTYPE numbers
 #define IMAGE_FILE_SIZE   (227*227*3)
 //#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
 #define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
 #define LAYER_NUM         8
 #define CONV_NUM          5
-const char *weight_file_path = "../data/data_alex/weights.dat";
-const char *input_file_path = "../data/data_alex/image.dat";
-const char *ref_file_path = "../data/data_alex/fc8.dat";
+const char *weight_file_path = "./data/data_alex/weights.dat";
+const char *input_file_path = "./data/data_alex/image.dat";
+const char *ref_file_path = "./data/data_alex/fc8.dat";
 const char *dump_file_path = "./result_dump.txt";
 
 
 /*
 // VGG16
 // Original problem size
-// File size is in num of float numbers
+// File size is in num of DTYPE numbers
 #define IMAGE_FILE_SIZE   (224*224*3)
 #define WEIGHTS_FILE_SIZE 138455872  //fc8-1024
 #define LAYER_NUM         16
 #define CONV_NUM          13
 
-const char *weight_file_path = "../data/data_vgg/weights.dat";
-const char *input_file_path = "../data/data_vgg/image.dat";
-const char *ref_file_path = "../data/data_vgg/fc8.dat";
+const char *weight_file_path = "./data/data_vgg/weights.dat";
+const char *input_file_path = "./data/data_vgg/image.dat";
+const char *ref_file_path = "./data/data_vgg/fc8.dat";
 const char *dump_file_path = "./result_dump.txt";
 */
 
@@ -110,6 +140,12 @@ output_w, output_h, output_n
 
 };
 
+enum precision_item{
+	
+frac_w, frac_din, frac_dout
+	
+};
+
 
 // Define the kernel names used
 const char *knl_name_memRd = "memRead";
@@ -141,22 +177,24 @@ scoped_array<cl_mem> bias_buf;
 scoped_array<cl_mem> fc_1_buf;
 scoped_array<cl_mem> fc_2_buf;
 
-float *weights;
-float *image;
-float *data_init;
-float *weight_conv[MAX_LAYER_NUM];
-float *bias_conv[MAX_LAYER_NUM];
-float *output;
-float *output_one_item;
-float *output_reorder;
-float *golden_ref;
+DTYPE *weights;
+DTYPE *image;
+DTYPE *data_init;
+DTYPE *weight_conv[MAX_LAYER_NUM];
+DTYPE *bias_conv[MAX_LAYER_NUM];
+DTYPE *output;
+DTYPE *output_one_item;
+DTYPE *output_reorder;
+DTYPE *golden_ref;
+
+unsigned layer_config_original[LAYER_NUM][25];
 
 int  prepare();
 void dumpResult();
-void reorderWeights(float *weights, float *buffer, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned offset, unsigned vecSize, unsigned laneNum);
-void reorderBias(float *dataIn, float *bias, unsigned offset, unsigned dim4, unsigned laneNum);
-void reorderOutput(float *output, float *output_reorder, unsigned dim1, unsigned dim2, unsigned dim3);
-void extractOutput(float *output, float *output_one_item, unsigned item_num, unsigned batch_size, unsigned dim1, unsigned dim2, unsigned dim3);
+void reorderWeights(DTYPE *weights, DTYPE *weight_buf, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned dim4_original, unsigned offset, unsigned padding_offset, unsigned vecSize, unsigned laneNum);
+void reorderBias(DTYPE *dataIn, DTYPE *bias, unsigned offset, unsigned padding_offset, unsigned dim4, unsigned dim4_original, unsigned laneNum);
+void reorderOutput(DTYPE *output, DTYPE *output_reorder, unsigned dim1, unsigned dim2, unsigned dim3);
+void extractOutput(DTYPE *output, DTYPE *output_one_item, unsigned item_num, unsigned batch_size, unsigned dim1, unsigned dim2, unsigned dim3);
 void cleanup();
 
 
@@ -165,7 +203,7 @@ int main(int argc, char** argv)
 	cl_int status;
 	float std_err;  // standard errors
 	unsigned int err_num;
-	
+
 	unsigned int conv_output_num;
 	unsigned int conv_loop_cnt;
 	unsigned int conv_control;
@@ -178,6 +216,9 @@ int main(int argc, char** argv)
 	
 	unsigned int read_buf_size;
 	unsigned int batch_item_size;
+	unsigned int weight_buf_size;
+
+	unsigned int saturated_dim123;
 	
 	size_t knl_memRd_global_size[3];
 	size_t knl_memRd_local_size[3];
@@ -215,7 +256,7 @@ int main(int argc, char** argv)
 
 	// Query the available OpenCL device
 	device.reset(getDevices(platform_id, DEVICE_TYPE, &num_devices));
-	printf("Platform: %s\n", getPlatformName(platform_id).c_str());
+	printf("\nPlatform: %s\n", getPlatformName(platform_id).c_str());
 	printf("Using %d device(s)\n", num_devices);
 	for(unsigned i = 0; i < num_devices; ++i) {
 		printf("  Device %d: %s\n", i, getDeviceName(device[i]).c_str());
@@ -253,6 +294,8 @@ int main(int argc, char** argv)
 	fc_1_buf.reset(num_devices);
 	fc_2_buf.reset(num_devices);
 	
+	saturated_dim123 = ceil((float)(layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][weight_n])/VEC_SIZE)*VEC_SIZE;
+
 	// Create qeues, kernels and mem objs
 	for(unsigned i = 0; i < num_devices; ++i) {
 		// Command queue
@@ -283,55 +326,58 @@ int main(int argc, char** argv)
 
 		// Mems
 		for(unsigned j = 0; j < LAYER_NUM; ++j){
+			if(j==0){ // for layer-1, the image data is folded to saturate the vectorized pipeline
+				weight_buf_size = saturated_dim123*layer_config[j][weight_m];
+			}
+			else{ // other layers dim3 is divisible by VEC_SIZE
+			    weight_buf_size = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m];
+			}
+
 			// Weights buffers for each layer
 			weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, 
-				(layer_config[j][weight_w]*layer_config[j][weight_h]*
-				layer_config[j][weight_n]*layer_config[j][weight_m])* sizeof(float), NULL, &status);
+				weight_buf_size* sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for weights in layer");
 
 			// Bias buffers for each layer
 			bias_buf[i*LAYER_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, 
-				layer_config[j][bias_size] * sizeof(float), NULL, &status);
+				layer_config[j][bias_size] * sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for bias in layer");
+			
+			// Initializing all weights buffers, blocking write is used
+			status = clEnqueueWriteBuffer(que_memRd[i], weights_buf[i*LAYER_NUM+j], CL_TRUE,
+				0, weight_buf_size*sizeof(DTYPE), weight_conv[j], 0, NULL, NULL);
+			checkError(status, "Failed to transfer weight");
+
+			status = clEnqueueWriteBuffer(que_memRd[i], bias_buf[i*LAYER_NUM+j], CL_TRUE,
+				0, layer_config[j][bias_size] * sizeof(DTYPE), bias_conv[j], 0, NULL, NULL);
+			checkError(status, "Failed to transfer bias");
 		}
 		
 		// Create data buffers for each batch item
 		for(unsigned j = 0; j < input_config[batch_size]; ++j){
 			// Input data buffers
 			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE, 
-				IN_BUF_SIZE * sizeof(float), NULL, &status);
+				saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y]* sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for data in layer");
 
 			// Output results buffers
 			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE, 
-				OUT_BUF_SIZE * sizeof(float), NULL, &status);
+				OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for output");
 
 			// Load image data into buffers
 			status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
-				0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(float), data_init, 0, NULL, NULL);
+				0, (saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
 			checkError(status, "Failed to transfer input image");
-		}
-
-		// Initializing all weights buffers, blocking write is used
-		for(unsigned j = 0; j < LAYER_NUM; ++j){
-			status = clEnqueueWriteBuffer(que_memRd[i], weights_buf[i*LAYER_NUM+j], CL_TRUE,
-				0, (layer_config[j][weight_w]*layer_config[j][weight_h]*
-				layer_config[j][weight_n]*layer_config[j][weight_m])*sizeof(float), weight_conv[j], 0, NULL, NULL);
-			checkError(status, "Failed to transfer weight");
-
-			status = clEnqueueWriteBuffer(que_memRd[i], bias_buf[i*LAYER_NUM+j], CL_TRUE,
-				0, layer_config[j][bias_size] * sizeof(float), bias_conv[j], 0, NULL, NULL);
-			checkError(status, "Failed to transfer bias");
 		}
 		
 		// Allocate fc buffers
 		fc_1_buf[i] = clCreateBuffer(context,  CL_MEM_READ_WRITE, 
-				FC_BUF_SIZE * sizeof(float), NULL, &status);
+				FC_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 		checkError(status, "Failed to create buffer for data in fc layer");
 
 		fc_2_buf[i] = clCreateBuffer(context,  CL_MEM_READ_WRITE, 
-				FC_BUF_SIZE * sizeof(float), NULL, &status);
+				FC_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 		checkError(status, "Failed to create buffer for data in fc layer");		
 	}
 	
@@ -354,6 +400,13 @@ int main(int argc, char** argv)
 	t.start();
 
 	unsigned iter_num;
+	unsigned short out_dim1xbatch;
+	unsigned int   out_dim1x2xbatch;
+	unsigned char  padding_offset;
+	unsigned char  data_dim1, data_dim2;
+	unsigned char  weight_dim1, weight_dim2;
+	unsigned char  stride, padding;
+	
 	// Kernel excutions main loops
 	for(unsigned i = 0; i < num_devices; ++i) {
 		
@@ -379,22 +432,40 @@ int main(int argc, char** argv)
 			// Set knl_memRd arguments.
 			unsigned argi = 0;
 			
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][data_w]);
+			if(j == 0){ // layer-1
+			
+				data_dim1 = layer_config[j][conv_x];
+				data_dim2 = layer_config[j][conv_y];
+				weight_dim1 = 1; // dim1 is folded to dim3
+				weight_dim2 = 1; // dim2 is folded to dim3
+				stride  = 1; // stride is done in prepare()
+				padding = 0; // padding is done in prepare()
+			}
+			else{ // other layers
+				data_dim1 = layer_config[j][data_w];
+				data_dim2 = layer_config[j][data_h];
+				weight_dim1 = layer_config[j][weight_w];
+				weight_dim2 = layer_config[j][weight_h];
+				stride  = layer_config[j][conv_stride];
+				padding = layer_config[j][conv_padding];
+			}
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &data_dim1);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][data_h]);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &data_dim2);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][weight_w]);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &weight_dim1);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][weight_h]);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &weight_dim2);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_stride]);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &stride);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_padding]);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &padding);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
 			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_split]);
@@ -433,10 +504,18 @@ int main(int argc, char** argv)
 			//  Set knl_conv arguments.
 			argi = 0;
 
-			conv_output_num = layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][conv_z]/LANE_NUM;
-			conv_loop_cnt = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]/VEC_SIZE;
-			conv_control = (layer_config[j][conv_relu]&0x01)|(((~layer_config[j][pool_on])&0x01)<<1);
-
+		
+			if(j==0){ // layer-1
+				conv_loop_cnt = saturated_dim123/VEC_SIZE;
+			}
+			else{ // other layers
+				conv_loop_cnt = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]/VEC_SIZE;
+				if((layer_config[j][weight_n]%VEC_SIZE)!=0)
+					printf("\nError: incorrect setting of parameter VEC_SIZE !!!\n");
+			}
+			conv_output_num = layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][weight_m]/LANE_NUM; // new weight_m is divisible by LANE_NUM
+			conv_control = (layer_config[j][conv_relu]&0x01)|(((~layer_config[j][pool_on])&0x01)<<1);				
+			
 			status = clSetKernelArg(knl_conv[i], argi++, sizeof(cl_uint), &conv_output_num);
 			checkError(status, "Failed to set argument %d of kernel conv", argi - 1);
 	
@@ -446,22 +525,31 @@ int main(int argc, char** argv)
 			status = clSetKernelArg(knl_conv[i], argi++, sizeof(cl_uint), &conv_control);
 			checkError(status, "Failed to set argument %d of kernel conv", argi - 1);
 	
+			status = clSetKernelArg(knl_conv[i], argi++, sizeof(cl_char), &precision_config[j][frac_w]);
+			checkError(status, "Failed to set argument %d of kernel conv", argi - 1);
+
+			status = clSetKernelArg(knl_conv[i], argi++, sizeof(cl_char), &precision_config[j][frac_din]);
+			checkError(status, "Failed to set argument %d of kernel conv", argi - 1);
+
+			status = clSetKernelArg(knl_conv[i], argi++, sizeof(cl_char), &precision_config[j][frac_dout]);
+			checkError(status, "Failed to set argument %d of kernel conv", argi - 1);
+			
 			//  Set knl_pool arguments.
 			if(layer_config[j][pool_on]){
 				argi = 0;
 				
-				pool_input_num = layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][conv_z]/LANE_NUM;
+				pool_input_num = layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][weight_m]/LANE_NUM; // new weight_m is divisible by LANE_NUM
 				pool_line_size = layer_config[j][conv_x];
 				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uint), &pool_input_num);
 				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
 				
-				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uint), &pool_line_size);
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &pool_line_size);
 				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
 				
-				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uint), &layer_config[j][pool_size]);
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_size]);
 				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
 				
-				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uint), &layer_config[j][pool_stride]);
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_stride]);
 				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
 			}
 	
@@ -469,15 +557,31 @@ int main(int argc, char** argv)
 			argi = 0;
 			unsigned char batch_size_in_dim_log;
 			unsigned char mask = 0xff;
+			unsigned char memWr_dim1, memWr_dim2;
+			unsigned short memWr_dim3;
 			
 			pool_bypass = (~layer_config[j][pool_on])&0x01;
 			
-			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_x]);
+			if(layer_config[j][pool_on]==1){
+				memWr_dim1 = layer_config[j][pool_x];
+				memWr_dim2 = layer_config[j][pool_y];
+				memWr_dim3 = layer_config[j][pool_z];
+			}
+			else{
+				memWr_dim1 = layer_config[j][conv_x];
+				memWr_dim2 = layer_config[j][conv_y];
+				memWr_dim3 = layer_config[j][conv_z];
+			}
+
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &memWr_dim1);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 	
-			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_y]);
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &memWr_dim2);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
-			
+
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_ushort), &memWr_dim3); // pool_z equals original weight_m
+			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
 			if(j==(CONV_NUM-1)){ // For last Conv Layer, combine all batch data into one fc buffer
 				if(input_config[batch_size]==1){
 					batch_size_in_dim = 1;
@@ -489,9 +593,9 @@ int main(int argc, char** argv)
 					batch_size_in_dim_log = log(batch_size_in_dim)/log(2);
 					batch_indx_dim1 = k&(~((mask>>batch_size_in_dim_log)<<batch_size_in_dim_log));
 					batch_indx_dim2 = k>>batch_size_in_dim_log;
-					printf("k=%d (%d, %d)\n", k, batch_size_in_dim, batch_size_in_dim_log);
-					printf("batch_indx_dim1=%d\n", batch_indx_dim1);
-					printf("batch_indx_dim2=%d\n", batch_indx_dim2);					
+					//printf("k=%d (%d, %d)\n", k, batch_size_in_dim, batch_size_in_dim_log);
+					//printf("batch_indx_dim1=%d\n", batch_indx_dim1);
+					//printf("batch_indx_dim2=%d\n", batch_indx_dim2);					
 				}
 			}
 			else{ // Normal WR Operations
@@ -500,9 +604,16 @@ int main(int argc, char** argv)
 				batch_indx_dim2 = 0;				
 			}
             
-			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &batch_size_in_dim);
+			out_dim1xbatch = memWr_dim1*batch_size_in_dim;
+			out_dim1x2xbatch = memWr_dim1*memWr_dim2*batch_size_in_dim*batch_size_in_dim;
+			padding_offset = (layer_config[j][weight_m]-layer_config_original[j][weight_m])/2;
+			
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_ushort), &out_dim1xbatch);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 	        
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uint), &out_dim1x2xbatch);
+			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+			
 			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &batch_indx_dim1);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 	        
@@ -510,6 +621,9 @@ int main(int argc, char** argv)
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 
 			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &pool_bypass);
+			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &padding_offset);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 			
 			// Select the kernel output mem object source
@@ -542,7 +656,10 @@ int main(int argc, char** argv)
 		
 				status = clSetKernelArg(knl_lrn[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_y]);
 				checkError(status, "Failed to set argument %d of kernel lrn", argi - 1);
-		
+					
+				status = clSetKernelArg(knl_lrn[i], argi++, sizeof(cl_char), &precision_config[j][frac_dout]);
+				checkError(status, "Failed to set argument %d of kernel lrn", argi - 1);
+
 				status = clSetKernelArg(knl_lrn[i], argi++, sizeof(cl_mem), &output_buf[i*input_config[batch_size]+k]);
 				checkError(status, "Failed to set argument %d of kernel lrn", argi - 1);	
 				
@@ -557,13 +674,28 @@ int main(int argc, char** argv)
 				printf("\nExecuting Layer %d:\n", j+1);
 	
 			// kernel memRd
-			knl_memRd_global_size[0] = layer_config[j][conv_x]*layer_config[j][weight_w];
-			knl_memRd_global_size[1] = layer_config[j][conv_y]*layer_config[j][weight_h];
-			knl_memRd_global_size[2] = layer_config[j][conv_z]/LANE_NUM*layer_config[j][weight_n]/VEC_SIZE;
-			
-			knl_memRd_local_size[0] = layer_config[j][weight_w];
-			knl_memRd_local_size[1] = layer_config[j][weight_h];
-			knl_memRd_local_size[2] = layer_config[j][weight_n]/VEC_SIZE;
+			if((layer_config[j][weight_m]%LANE_NUM)!=0)
+				printf("\nError: incorrect setting of parameter LAN_NUM or incorrect padding in weight_m !!!\n");
+			if(j == 0){ // Layer-1
+				
+				knl_memRd_global_size[0] = layer_config[j][conv_x];
+				knl_memRd_global_size[1] = layer_config[j][conv_y];
+				knl_memRd_global_size[2] = layer_config[j][weight_m]/LANE_NUM*saturated_dim123/VEC_SIZE; // new conv_z=weight_m is divisible by LANE_NUM
+
+				knl_memRd_local_size[0] = 1;
+				knl_memRd_local_size[1] = 1;
+				knl_memRd_local_size[2] = saturated_dim123/VEC_SIZE;
+			}
+			else{ // other layers
+				
+				knl_memRd_global_size[0] = layer_config[j][conv_x]*layer_config[j][weight_w];
+				knl_memRd_global_size[1] = layer_config[j][conv_y]*layer_config[j][weight_h];
+				knl_memRd_global_size[2] = layer_config[j][weight_m]/LANE_NUM*layer_config[j][weight_n]/VEC_SIZE; // new conv_z=weight_m is divisible by LANE_NUM
+
+				knl_memRd_local_size[0] = layer_config[j][weight_w];
+				knl_memRd_local_size[1] = layer_config[j][weight_h];
+				knl_memRd_local_size[2] = layer_config[j][weight_n]/VEC_SIZE;
+			}
 
 			status = clEnqueueNDRangeKernel(que_memRd[i], knl_memRd[i], 3, NULL, 
 									knl_memRd_global_size, knl_memRd_local_size, 0, NULL, &memRd_event[i]);
@@ -589,12 +721,12 @@ int main(int argc, char** argv)
 			}
 
 			// kernel memWr
-			knl_memWr_global_size[0] = layer_config[j][pool_x];
-			knl_memWr_global_size[1] = layer_config[j][pool_y];
-			knl_memWr_global_size[2] = layer_config[j][pool_z]/LANE_NUM;
+			knl_memWr_global_size[0] = memWr_dim1;
+			knl_memWr_global_size[1] = memWr_dim2;
+			knl_memWr_global_size[2] = layer_config[j][weight_m]; // pool_z equals original weight_m, new weight_m is divisible by LANE_NUM
 			knl_memWr_local_size[0] = 1;
 			knl_memWr_local_size[1] = 1;
-			knl_memWr_local_size[2] = 1;
+			knl_memWr_local_size[2] = LANE_NUM;
 
 			status = clEnqueueNDRangeKernel(que_memWr[i], knl_memWr[i], 3, NULL, 
 									knl_memWr_global_size, knl_memWr_local_size, 0, NULL, &memWr_event[i]);
@@ -654,7 +786,8 @@ int main(int argc, char** argv)
 		printf("Warnning: only the result from device0 will be verified!!!\n\n");
 	
 	// Select whith item you would like to compare with the golden ref 
-	unsigned batch_item_num = 3;
+	// Item num start from 0
+	unsigned batch_item_num = 0;
 	if(batch_item_num>(input_config[batch_size]-1)){
 		printf("Error: wrong configuration，can't verify the item since it is layer than batch size !!!\n\n");
 	}
@@ -670,26 +803,26 @@ int main(int argc, char** argv)
 	if(layer_config[LAYER_NUM-1][memwr_dst] == 2){
 		printf("\nCopyed all batched results from fc_1 buffers.\n");
 		status = clEnqueueReadBuffer(que_memWr[0], fc_1_buf[0], CL_FALSE,          // read from device0
-			0, sizeof(float) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);  
+			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);  
 		checkError(status, "Failed to set transfer output data");			
 	}
 	else if(layer_config[LAYER_NUM-1][memwr_dst] == 3){
 		printf("\nCopyed all batched results from fc_2 buffers.\n");
 		status = clEnqueueReadBuffer(que_memWr[0], fc_2_buf[0], CL_FALSE,          // read from device0
-			0, sizeof(float) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);  
+			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);  
 		checkError(status, "Failed to set transfer output data");			
 	}
 	// For other layers, read results from data and output buffers
 	else if(layer_config[LAYER_NUM-1][memwr_dst]^layer_config[LAYER_NUM-1][lrn_on]){// if lrn is used, the mem dst is changed back to src
 		printf("\nCopyed one result from NO.%d output buffers.\n", batch_item_num);
 		status = clEnqueueReadBuffer(que_memWr[0], output_buf[batch_item_num], CL_FALSE,         // read from device0
-			0, sizeof(float) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);  
+			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);  
 		checkError(status, "Failed to set transfer output data");			
 	}
 	else{
 		printf("\nCopyed one results from NO.%d data buffers.\n", batch_item_num);
 		status = clEnqueueReadBuffer(que_memWr[0], data_buf[batch_item_num], CL_FALSE,           // read from device0
-			0, sizeof(float) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);  
+			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);  
 		checkError(status, "Failed to set transfer output data");
 	}
 
@@ -738,9 +871,13 @@ int main(int argc, char** argv)
 		// Extract one results from all batch arranged results stored in fc buffers
 		extractOutput(output, output_one_item, batch_item_num, input_config[batch_size], output_config[output_w], output_config[output_h], output_config[output_n]);
 	}
-	else
-		// Copy results from one of the output/data buffers
-		extractOutput(output, output_one_item, 0, 1, layer_config[LAYER_NUM-1][pool_x], layer_config[LAYER_NUM-1][pool_y], layer_config[LAYER_NUM-1][pool_z]);
+	else{
+		if(layer_config[LAYER_NUM-1][pool_on]==1)
+			// Copy results from one of the output/data buffers
+			extractOutput(output, output_one_item, 0, 1, layer_config[LAYER_NUM-1][pool_x], layer_config[LAYER_NUM-1][pool_y], layer_config[LAYER_NUM-1][pool_z]);
+		else
+			extractOutput(output, output_one_item, 0, 1, layer_config[LAYER_NUM-1][conv_x], layer_config[LAYER_NUM-1][conv_y], layer_config[LAYER_NUM-1][conv_z]);
+	}
 	
 	// Reorder one item of the batch results into scalar format
 	reorderOutput(output_one_item, output_reorder, output_config[output_w], output_config[output_h], output_config[output_n]);
@@ -749,9 +886,12 @@ int main(int argc, char** argv)
 	batch_item_size = output_config[output_w]*output_config[output_h]*output_config[output_n];
 	err_num = 0;
 	for (unsigned int j = 0; j < batch_item_size; j++){
-		std_err = pow((output_reorder[j] - golden_ref[j]), 2);
-		if(std_err > 1e-3)
+		std_err = abs(output_reorder[j] - golden_ref[j]);
+		if(std_err > 0){
 			err_num++;
+			if(err_num<10)
+				printf("Item=%d is wrong (result=%f, golden_ref=%f)\n", j, (float)output_reorder[j], (float)golden_ref[j]);
+		}
 	}
 	if(err_num>0)
 		printf("Totally %d Wrong Results\n", err_num);
@@ -775,20 +915,61 @@ int prepare()
     ifstream bin_file_r;
     unsigned file_size;
 	unsigned weight_size;
-	unsigned input_size;
 	unsigned output_size;
 	unsigned godref_size;
-	int ptr=0;
+	int ptr=0;  // original weight and bias offset for each layer  
 	
+	unsigned saturated_dim123;
+	DTYPE    *data_extract;
+	unsigned padding_offset[LAYER_NUM];
+	
+	// copy the original layer configurations
+	// perform padding when the num of feature maps is not divisible by LANE_NUM
+	for(unsigned ll=0; ll<LAYER_NUM; ll++){
+		for(unsigned ii=0; ii<25; ii++){
+			layer_config_original[ll][ii]=layer_config[ll][ii];
+			// check parameters
+
+		}
+		if(layer_config[ll][weight_m]%LANE_NUM != 0){
+			printf("\nInit: layer-%d requires padding zero-value feature maps for give param LANE_NUM=%d\n", ll+1, LANE_NUM);
+			// change the num of output featuremaps to new value that is divisible by LANE_NUM
+			// Note: the num of input feature maps of next layer remains the same
+			layer_config[ll][weight_m] = ceil((float)layer_config[ll][weight_m]/LANE_NUM)*LANE_NUM;
+			layer_config[ll][bias_size] = layer_config[ll][weight_m];
+			printf("      original num of feature maps is %d, new value is %d\n", layer_config_original[ll][weight_m], layer_config[ll][weight_m]);
+
+			//// check if evenly padding on two sides is possible
+			//padding_offset[ll] = layer_config[ll][weight_m] - layer_config_original[ll][weight_m];
+			//if(((layer_config[ll][weight_m]/LANE_NUM)%2!=0) & (layer_config[ll][conv_split]==1)){
+			//	printf("Error: could not perform padding for split mode, weight_m/LANE_NUM must be divisible by 2 !!!\n\n");
+			//	return 1;
+			//}
+			//else{
+			//	padding_offset[ll] = padding_offset[ll]/2;
+			//	printf("      padding_offset=%d (layer=%d)\n\n", padding_offset[ll], ll+1);
+			//}
+		}
+		else{
+			//padding_offset[ll] = 0;
+		}
+	}
+
+	
+	// for first layer, saturate dim1*dim2*dim3 to the size of multiples of VEC_SIZE
+	saturated_dim123 = ceil((float)(layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][weight_n])/VEC_SIZE)*VEC_SIZE;
+
 	// image and weight files
-	weights      = (float *)alignedMalloc(sizeof(float)*WEIGHTS_FILE_SIZE, DMA_ALIGNMENT);
-	image        = (float *)alignedMalloc(sizeof(float)*IMAGE_FILE_SIZE, DMA_ALIGNMENT);
+	weights      = (DTYPE *)alignedMalloc(sizeof(DTYPE)*WEIGHTS_FILE_SIZE, DMA_ALIGNMENT);
+	image        = (DTYPE *)alignedMalloc(sizeof(DTYPE)*IMAGE_FILE_SIZE, DMA_ALIGNMENT);
 	
 	// input data
-	input_size  = layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n];
-	data_init   = (float *)alignedMalloc(sizeof(float)*input_size, DMA_ALIGNMENT);
-	memset(data_init, 0, sizeof(float)*input_size);// fill non-RGB dims with 0
+	data_init   = (DTYPE *)alignedMalloc(sizeof(DTYPE)*saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y], DMA_ALIGNMENT);
+	memset(data_init, 0, sizeof(DTYPE)*saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y]);// fill non-RGB dims with 0
 
+	data_extract   = (DTYPE *)alignedMalloc(sizeof(DTYPE)*saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y], DMA_ALIGNMENT);
+	memset(data_extract, 0, sizeof(DTYPE)*saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y]);// fill non-RGB dims with 0
+	
 	// final results
 	if(LAYER_NUM>=CONV_NUM)// For last conv and all fc layers, all batch results are read back
 		output_size = output_config[output_w]*output_config[output_h]*output_config[output_n]*input_config[batch_size];
@@ -797,17 +978,18 @@ int prepare()
 
 	godref_size = output_config[output_w]*output_config[output_h]*output_config[output_n];
 
-	output          = (float *)alignedMalloc(sizeof(float)*output_size, DMA_ALIGNMENT); // vectorized results
-	output_one_item = (float *)alignedMalloc(sizeof(float)*godref_size, DMA_ALIGNMENT); // one item extracted from batch results
-	golden_ref      = (float *)alignedMalloc(sizeof(float)*godref_size, DMA_ALIGNMENT);
-    output_reorder  = (float *)alignedMalloc(sizeof(float)*godref_size, DMA_ALIGNMENT); // reordered results for verifying
+	output          = (DTYPE *)alignedMalloc(sizeof(DTYPE)*output_size, DMA_ALIGNMENT); // vectorized results
+	output_one_item = (DTYPE *)alignedMalloc(sizeof(DTYPE)*godref_size, DMA_ALIGNMENT); // one item extracted from batch results
+	golden_ref      = (DTYPE *)alignedMalloc(sizeof(DTYPE)*godref_size, DMA_ALIGNMENT);
+    output_reorder  = (DTYPE *)alignedMalloc(sizeof(DTYPE)*godref_size, DMA_ALIGNMENT); // reordered results for verifying
 
-	if(weights == NULL || image == NULL || golden_ref == NULL || data_init == NULL || output == NULL || output_reorder == NULL)
+	if(weights == NULL || image == NULL || golden_ref == NULL || data_init == NULL || data_extract == NULL || output == NULL || output_one_item == NULL || output_reorder == NULL)
 	{
 		printf("Not enough memory !!!");
 		alignedFree(weights);
 		alignedFree(image);
 		alignedFree(data_init);
+		alignedFree(data_extract);
 		alignedFree(golden_ref);
 		alignedFree(output_one_item);
 		alignedFree(output);
@@ -819,12 +1001,18 @@ int prepare()
 	// weights and bias	
 	for(int j=0; j<LAYER_NUM; j++){
 		
-		weight_size = (layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m]);
+		if(j==0){ // layer-1
+			weight_size = saturated_dim123*layer_config[j][weight_m];
+		}
+		else{ // other layers
+			weight_size = (layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m]);
+		}
 		
-		weight_conv[j] = (float *)alignedMalloc(sizeof(float)*weight_size, DMA_ALIGNMENT);
-		bias_conv[j]   = (float *)alignedMalloc(sizeof(float)*layer_config[j][bias_size], DMA_ALIGNMENT);
+		weight_conv[j] = (DTYPE *)alignedMalloc(sizeof(DTYPE)*weight_size, DMA_ALIGNMENT);
+		bias_conv[j]   = (DTYPE *)alignedMalloc(sizeof(DTYPE)*layer_config[j][bias_size], DMA_ALIGNMENT);
 		
-		memset(weight_conv[j], 0, sizeof(float)*weight_size);// reset with zero
+		memset(weight_conv[j], 0, sizeof(DTYPE)*weight_size);             // reset all value (include padding value) to zero
+		memset(bias_conv[j], 0, sizeof(DTYPE)*layer_config[j][bias_size]);// reset all value (include padding value) to zero
 		
 		if(weight_conv[j] == NULL || bias_conv[j] == NULL )
 		{
@@ -847,9 +1035,9 @@ int prepare()
 		file_size = bin_file_r.tellg();
 		bin_file_r.seekg(0, bin_file_r.beg);
 		
-    	bin_file_r.read((char *)weights, sizeof(float)*WEIGHTS_FILE_SIZE);
-    	printf("%d total float weights read \n", file_size/4);
-		if(WEIGHTS_FILE_SIZE!=(file_size/4))
+    	bin_file_r.read((char *)weights, sizeof(DTYPE)*WEIGHTS_FILE_SIZE);
+    	printf("\n%d total weights read \n", file_size/((int)sizeof(DTYPE)));
+		if(WEIGHTS_FILE_SIZE!=(file_size/(sizeof(DTYPE))))
 			printf("Warning: weight file size does not match user configuration !!!\n");
     	bin_file_r.close();
     }
@@ -866,9 +1054,9 @@ int prepare()
 		file_size = bin_file_r.tellg();
 		bin_file_r.seekg(0, bin_file_r.beg);
 		
-    	bin_file_r.read((char *)image, sizeof(float)*IMAGE_FILE_SIZE);
+    	bin_file_r.read((char *)image, sizeof(DTYPE)*IMAGE_FILE_SIZE);
     	printf("%d bytes image read \n", file_size);
-		if(IMAGE_FILE_SIZE!=(file_size/4))
+		if(IMAGE_FILE_SIZE!=(file_size/(sizeof(DTYPE))))
 			printf("Warning: image file size does not match user configuration !!!\n");
     	bin_file_r.close();
     }
@@ -885,97 +1073,237 @@ int prepare()
 		file_size = bin_file_r.tellg();
 		bin_file_r.seekg(0, bin_file_r.beg);
 				
-    	bin_file_r.read((char *)golden_ref, sizeof(float)*godref_size);
-    	printf("%d total output reference read \n\n", file_size/4);
-		if(godref_size!=(file_size/4))
+    	bin_file_r.read((char *)golden_ref, sizeof(DTYPE)*godref_size);
+    	printf("%d total output reference read \n\n", file_size/((int)sizeof(DTYPE)));
+		if(godref_size!=(file_size/(sizeof(DTYPE))))
 			printf("Warning: golden reference file size does not match !!!\n");
     	bin_file_r.close();
     }
     else
     	printf("Golden file does not exits !!!\n");
+
 	
+	// Fold the input image and weight to saturate the vectorized pipeline
+	if((layer_config[0][weight_n]!=input_config[image_n]) ||(layer_config[0][weight_n]>=VEC_SIZE))
+		printf("\nError: incorrect layer configuration for layer-1 !!!\n");
 	
-	// Copy the image data into the input data buffer for kernel_0
-	// The RGB dims are combined into a vector
-	// The other dims are filled with 0 (use memset) to fit the vect size of the compute kernel
-	for(unsigned i = 0; i<input_config[image_h]; i++){
-		for(unsigned j = 0; j<input_config[image_w]; j++){
-			for(unsigned k = 0; k<input_config[image_n]; k++){
-				data_init[i*input_config[image_w]*VEC_SIZE + j*VEC_SIZE + k] = (float) image[k*input_config[image_w]*input_config[image_h] + i*input_config[image_w] + j];
+	// Copy the image data into the input data buffer
+	// first, extract the image data for each conv operations and fill them into input buffer
+	int w_start, w_end;
+	int h_start, h_end;
+	for(unsigned q = 0; q<layer_config[0][conv_x]; q++){
+		for(unsigned p = 0; p<layer_config[0][conv_y]; p++){
+						
+			w_start = q*layer_config[0][conv_stride]-layer_config[0][conv_padding];
+			w_end   = w_start+layer_config[0][weight_w]-1;
+			h_start = p*layer_config[0][conv_stride]-layer_config[0][conv_padding];
+			h_end   = h_start+layer_config[0][weight_h]-1;
+			
+			//printf("w_start=%d w_end=%d h_start=%d h_end=%d\n", w_start, w_end, h_start, h_end);
+			
+			for(unsigned nn = 0; nn<input_config[image_n]; nn++){
+						for(int ww = w_start; ww<=w_end; ww++){
+							for(int hh = h_start; hh<=h_end; hh++){
+								
+								if(ww<0 || ww>=(signed)input_config[image_w] || hh<0 || hh>=(signed)input_config[image_h])
+									data_extract[nn*layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][conv_x]*layer_config[0][conv_y]+ (hh-h_start)*layer_config[0][weight_w]*layer_config[0][conv_x]*layer_config[0][conv_y] + (ww-w_start)*layer_config[0][conv_x]*layer_config[0][conv_y] + p*layer_config[0][conv_x] + q]
+										= 0; // padding value
+								else
+									data_extract[nn*layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][conv_x]*layer_config[0][conv_y]+ (hh-h_start)*layer_config[0][weight_w]*layer_config[0][conv_x]*layer_config[0][conv_y] + (ww-w_start)*layer_config[0][conv_x]*layer_config[0][conv_y] + p*layer_config[0][conv_x] + q]
+										= (DTYPE) image[nn*input_config[image_w]*input_config[image_h] + hh*input_config[image_w] + ww];
+								
+							}
+						}
+			}
+		}
+	}
+	// second, vectorize the data by a factor of VECS_SIZE
+	for(unsigned q = 0; q<layer_config[0][conv_x]; q++){
+		for(unsigned p = 0; p<layer_config[0][conv_y]; p++){
+			for(unsigned nn = 0; nn<saturated_dim123/VEC_SIZE; nn++){
+				for(unsigned vv = 0; vv<VEC_SIZE; vv++){
+
+					data_init[ nn*VEC_SIZE*layer_config[0][conv_x]*layer_config[0][conv_y] + p*layer_config[0][conv_x]*VEC_SIZE + q*VEC_SIZE + vv] 
+						= data_extract[(nn*VEC_SIZE+vv)*layer_config[0][conv_x]*layer_config[0][conv_y] + p*layer_config[0][conv_x]+ q];
+
+				}
 			}
 		}
 	}
 
+	// calculate the padding value for each layer
+	for(unsigned ll=0; ll<LAYER_NUM; ll++){
+
+		if(layer_config_original[ll][weight_m]%LANE_NUM != 0){
+			printf("\nInit: layer-%d requires padding zero-value feature maps for give param LANE_NUM=%d\n", ll+1, LANE_NUM);
+			
+			// check if evenly padding on two sides is possible
+			padding_offset[ll] = layer_config[ll][weight_m] - layer_config_original[ll][weight_m];
+			if(((layer_config[ll][weight_m]/LANE_NUM)%2!=0) & (layer_config[ll][conv_split]==1)){
+				printf("Error: could not perform padding for split mode, weight_m/LANE_NUM must be divisible by 2 !!!\n\n");
+				return 1;
+			}
+			else{
+				padding_offset[ll] = padding_offset[ll]/2;
+				printf("      padding_offset=%d (layer=%d)\n\n", padding_offset[ll], ll+1);
+			}
+		}
+		else{
+			padding_offset[ll] = 0;
+		}
+	}
+
 	// Layer-1
-	reorderWeights(weights, weight_conv[0], layer_config[0][weight_w], layer_config[0][weight_h], input_config[image_n], layer_config[0][weight_m], ptr, VEC_SIZE, LANE_NUM);
-	ptr+=layer_config[0][weight_w]*layer_config[0][weight_h]*input_config[image_n]*layer_config[0][weight_m];
-	reorderBias(weights, bias_conv[0], ptr, layer_config[0][bias_size], LANE_NUM);
-	ptr+=layer_config[0][bias_size];
+	reorderWeights(weights, weight_conv[0], layer_config[0][weight_w], layer_config[0][weight_h], layer_config[0][weight_n], layer_config[0][weight_m], layer_config_original[0][weight_m], ptr, padding_offset[0], VEC_SIZE, LANE_NUM);
+	ptr+=layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][weight_n]*layer_config_original[0][weight_m];
+	reorderBias(weights, bias_conv[0], ptr, padding_offset[0], layer_config[0][bias_size], layer_config_original[0][bias_size], LANE_NUM);
+	ptr+=layer_config_original[0][bias_size];
 	
 	// Other layers
 	for(unsigned j=1; j<LAYER_NUM; j++){
 		
-		if(ptr+layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m]>WEIGHTS_FILE_SIZE)
+		if(ptr+layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config_original[j][weight_m]>WEIGHTS_FILE_SIZE)
 		{
 			printf("Error：exceed weight file size !!!\n");
 			return 1;
 		}
-		reorderWeights(weights, weight_conv[j], layer_config[j][weight_w], layer_config[j][weight_h], layer_config[j][weight_n], layer_config[j][weight_m], ptr, VEC_SIZE, LANE_NUM);
-		ptr+=layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m];
-		reorderBias(weights, bias_conv[j], ptr, layer_config[j][bias_size], LANE_NUM);
-		ptr+=layer_config[j][bias_size];
+		reorderWeights(weights, weight_conv[j], layer_config[j][weight_w], layer_config[j][weight_h], layer_config[j][weight_n], layer_config[j][weight_m], layer_config_original[j][weight_m], ptr, padding_offset[j], VEC_SIZE, LANE_NUM);
+		ptr+=layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config_original[j][weight_m];
+		reorderBias(weights, bias_conv[j], ptr, padding_offset[j], layer_config[j][bias_size], layer_config_original[j][bias_size], LANE_NUM);
+		ptr+=layer_config_original[j][bias_size];
 	}
+
+	// release resource
+	alignedFree(data_extract);
 	
 	return 0;
 }
 
 
-void reorderWeights(float *dataIn, float *weights, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned offset, unsigned vecSize, unsigned laneNum){
+void reorderWeights(DTYPE *weights, DTYPE *weight_buf, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned dim4_original, unsigned offset, unsigned padding_offset, unsigned vecSize, unsigned laneNum){
 
-	unsigned k_bound, dim3_dest, n_bound;
+	unsigned k_bound, n_bound;
+	unsigned saturated_dim123;
+	unsigned weight_size;
+	DTYPE    *weight_tmp;
+	DTYPE    *copy_with_padding;
 	
-	if(dim3>vecSize){ // for other Layer
-		k_bound = vecSize;
-		dim3_dest = dim3;
-		n_bound = dim3/vecSize;
+	// first, copy the data into new buffer with zero paddings
+	copy_with_padding  = (DTYPE *)malloc(sizeof(DTYPE)*dim1*dim2*dim3*dim4);
+	if(copy_with_padding == NULL)
+	{
+		printf("Not enough memory when reordering weight!!!");
+		free(copy_with_padding);
 	}
-	else{ // for Layer 1
-		k_bound = dim3;
-		dim3_dest = vecSize;
-		n_bound = 1;
-	}
+	memset(copy_with_padding, 0, sizeof(DTYPE)*dim1*dim2*dim3*dim4);
+	// padding evenly on two sides of weight_m
+	memcpy(copy_with_padding+(padding_offset*dim1*dim2*dim3), weights+offset, sizeof(DTYPE)*dim1*dim2*dim3*dim4_original);
+	
+	// second, perform vectorization
+	if((dim4/laneNum)*laneNum!=dim4) // dim4 must be divisible by laneNum
+		printf("\nWarrning: Incorrect feature map dim4=%d when reorderring weight !!!\n", dim4);
 
-	for(unsigned m = 0; m<(dim4/laneNum); m++){
-		for(unsigned n = 0; n<n_bound; n++){
-			for(unsigned i = 0; i<dim2; i++){
-				for(unsigned j = 0; j<dim1; j++){
-					for(unsigned ll = 0; ll<laneNum; ll++){
-						for(unsigned k = 0; k<k_bound; k++){
-							//weights[m*dim1*dim2*dim3_dest*laneNum + i*dim1*vecSize*laneNum + j*vecSize*laneNum + ll*vecSize + k] 
-							//						= (float) dataIn[offset + (m*laneNum+ll)*k_bound*dim2*dim1 + (n*vecSize+k)*dim1*dim2 + i*dim1 + j];
-							weights[m*dim1*dim2*dim3_dest*laneNum + n*dim1*dim2*vecSize*laneNum + i*dim1*vecSize*laneNum + j*vecSize*laneNum + ll*vecSize + k] 
-													= (float) dataIn[offset + (m*laneNum+ll)*dim3*dim2*dim1 + (n*vecSize+k)*dim1*dim2 + i*dim1 + j];
+	if(dim3>=vecSize){ // for other Layer
+		k_bound = vecSize;
+		n_bound = dim3/vecSize;
+
+		if((dim3!=n_bound*vecSize)) // dim3 must be divisible by vecSize
+			printf("\nWarrning: Incorrect feature map dim3=%d when reorderring weight !!!\n", dim3);
+		
+		for(unsigned m = 0; m<(dim4/laneNum); m++){
+			for(unsigned n = 0; n<n_bound; n++){
+				for(unsigned i = 0; i<dim2; i++){
+					for(unsigned j = 0; j<dim1; j++){
+						for(unsigned ll = 0; ll<laneNum; ll++){
+							for(unsigned k = 0; k<k_bound; k++){
+								//weights[m*dim1*dim2*dim3_dest*laneNum + i*dim1*vecSize*laneNum + j*vecSize*laneNum + ll*vecSize + k] 
+								//						= (DTYPE) dataIn[offset + (m*laneNum+ll)*k_bound*dim2*dim1 + (n*vecSize+k)*dim1*dim2 + i*dim1 + j];
+								weight_buf[m*dim1*dim2*dim3*laneNum + n*dim1*dim2*vecSize*laneNum + i*dim1*vecSize*laneNum + j*vecSize*laneNum + ll*vecSize + k] 
+														= (DTYPE) copy_with_padding[(m*laneNum+ll)*dim3*dim2*dim1 + (n*vecSize+k)*dim1*dim2 + i*dim1 + j];
+							}
 						}
 					}
 				}
 			}
 		}
 	}
+	else{ // for Layer 1 (dim3<vecSize)
 
+		saturated_dim123 = ceil((float)(dim1*dim2*dim3)/VEC_SIZE)*VEC_SIZE;
+		weight_size = saturated_dim123*dim4;
+
+		weight_tmp = (DTYPE *)malloc(sizeof(DTYPE)*weight_size);
+		if(weight_tmp == NULL)
+		{
+			printf("Not enough memory when reordering weight!!!");
+			free(weight_tmp);
+		}
+		memset(weight_tmp, 0, sizeof(DTYPE)*weight_size);// reset with zero
+		
+		if(weight_tmp == NULL)
+		{
+			printf("Run out of memory when preparig weights !!!\n");
+			free(weight_tmp);
+		}
+		
+		// first copy the weight into a 1-D buffer with saturated size in dim1*dim2*dim3
+		for(unsigned m = 0; m<dim4; m++){
+			for(unsigned n = 0; n<dim3; n++){
+				for(unsigned i = 0; i<dim2; i++){
+					for(unsigned j = 0; j<dim1; j++){
+								weight_tmp[m*saturated_dim123 + n*dim1*dim2 + i*dim1 + j] 
+														= (DTYPE) copy_with_padding[m*dim1*dim2*dim3 + n*dim1*dim2 + i*dim1 + j];
+					}
+				}
+			}
+		}
+		// second vectorize the weight by a factor of VEC_SIZE and LANE_NUM
+		for(unsigned m = 0; m<dim4/laneNum; m++){
+			for(unsigned n = 0; n<saturated_dim123/vecSize; n++){
+				for(unsigned ll = 0; ll<laneNum; ll++){
+					for(unsigned vv = 0; vv<vecSize; vv++){
+								weight_buf[m*laneNum*saturated_dim123 + n*vecSize*laneNum + ll*vecSize + vv]
+														= (DTYPE) weight_tmp[(m*laneNum + ll)*saturated_dim123 + (n*vecSize + vv)];
+					}
+				}
+			}
+		}
+
+		// release resource
+		free(weight_tmp);
+	}
+
+	// release resource
+	free(copy_with_padding);
 }
 
-void reorderBias(float *dataIn, float *bias, unsigned offset, unsigned dim4, unsigned laneNum){
+void reorderBias(DTYPE *dataIn, DTYPE *bias, unsigned offset, unsigned padding_offset, unsigned dim4, unsigned dim4_original, unsigned laneNum){
 	
+	DTYPE *copy_with_padding;
+	
+	// first copy the data into new buffer with zero paddings
+	copy_with_padding  = (DTYPE *)malloc(sizeof(DTYPE)*dim4);
+	if(copy_with_padding == NULL)
+	{
+		printf("Not enough memory when reordering bias!!!");
+		free(copy_with_padding);
+	}
+	memset(copy_with_padding, 0, sizeof(DTYPE)*dim4);
+	// padding evenly on two sides of weight_m
+	memcpy(copy_with_padding+padding_offset, dataIn+offset, sizeof(DTYPE)*dim4_original);
+	// second, perform vectorization by factor of LANE_NUM
 	for(unsigned m = 0; m<(dim4/laneNum); m++){
 		for(unsigned ll = 0; ll<laneNum; ll++){
-			bias[m*laneNum + ll] = (float) dataIn[offset + m*laneNum + ll];
+			bias[m*laneNum + ll] = (DTYPE) copy_with_padding[m*laneNum + ll];
 		}
 	}
+	// release resource
+	free(copy_with_padding);
 }
 
 
 // Extract one item from batch results
-void extractOutput(float *output, float *output_one_item, unsigned item_num, unsigned batch_size, unsigned dim1, unsigned dim2, unsigned dim3){
+void extractOutput(DTYPE *output, DTYPE *output_one_item, unsigned item_num, unsigned batch_size, unsigned dim1, unsigned dim2, unsigned dim3){
 
 	unsigned char mask = 0xff;
 	unsigned char batch_size_in_dim;
@@ -1011,7 +1339,7 @@ void extractOutput(float *output, float *output_one_item, unsigned item_num, uns
 
 
 // Re-ordering the vectorized output into scalar form
-void reorderOutput(float *output, float *output_reorder, unsigned dim1, unsigned dim2, unsigned dim3){
+void reorderOutput(DTYPE *output, DTYPE *output_reorder, unsigned dim1, unsigned dim2, unsigned dim3){
 
 	for(unsigned i = 0; i<dim2; i++){
 		for(unsigned j = 0; j<dim1; j++){
@@ -1036,8 +1364,8 @@ void dumpResult(){
 		for(unsigned j=0; j<output_config[output_h]; j++){
 			result_file << "x=" << j << ": ";
 			for(unsigned k=0; k<output_config[output_w]; k++){
-					result_file << output_reorder[output_config[output_w]*output_config[output_h]*i + output_config[output_w]*j + k] << "(";
-					result_file << golden_ref[output_config[output_w]*output_config[output_h]*i + output_config[output_w]*j + k] << ") ";
+					result_file << (float)output_reorder[output_config[output_w]*output_config[output_h]*i + output_config[output_w]*j + k] << "(";
+					result_file << (float)golden_ref[output_config[output_w]*output_config[output_h]*i + output_config[output_w]*j + k] << ") ";
 			}
 			result_file << endl;
 		}

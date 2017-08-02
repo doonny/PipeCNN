@@ -8,6 +8,8 @@ HOST_DEBUG =
 #set source and target for device
 #supported vendors are xilinx, altera, amd
 VENDOR = altera
+#select the host archecture  x86|arm32
+PLATFORM = x86
 #optinal flows are hw|hw_emu|sw_emu
 FLOW        = hw
 KERNEL_SRCS = ./device/conv_pipe.cl
@@ -30,7 +32,13 @@ DEV_EXE =
 endif
 
 #host compiler options
+CROSS-COMPILE = arm-linux-gnueabihf-
+ifeq ($(PLATFORM),x86)
 CXX := g++
+else ifeq ($(PLATFORM),arm32)
+CXX := $(CROSS-COMPILE)g++
+endif
+
 CXXFLAGS = -g -Wall -std=c++11
 
 ifeq ($(VENDOR),xilinx)
@@ -57,9 +65,9 @@ endif
 else ifeq ($(VENDOR),altera)
 OCC = aoc
 ifeq ($(FLOW),sw_emu)
-OCCFLAGS = -v --report -march=emulator
+OCCFLAGS = -v --report -march=emulator -I device/RTL -L device/RTL -l rtl_lib.aoclib 
 else ifeq ($(FLOW),hw)
-OCCFLAGS = -v --report --profile --fpc
+OCCFLAGS = -v --report --profile -I device/RTL -L device/RTL -l rtl_lib.aoclib 
 endif
 #amd
 else ifeq ($(VENDOR),amd)
@@ -90,5 +98,6 @@ $(HOST_EXE): $(HOST_OBJS)
 $(DEV_EXE): $(KERNEL_SRCS)
 	$(OCC) $(OCCFLAGS) $< -o $@
 
+.PHONY: clean
 clean:
 	rm -rf *.xclbin *.aocx *.aoco *.exe xocc* sdaccel* ./device/*.ll ./host/*.o ../common/*.o *.log *.jou
