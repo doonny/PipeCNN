@@ -26,12 +26,14 @@ Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-so
 * AlphaData's [ADM-PCIE-7V3](http://www.alpha-data.com/dcp/products.php?product=adm-pcie-7v3) (Virtex-7 690T FPGA)
 
 *Table-I. Performance Measured and Hardware Resource Concumed*
+
 |Platform|Performance|Speed|CNN Model|DSP Consumed|Configuration|
 |:-|:-:|:-:|:-:|:-:|:-:|
 |Stratix-V A7    |--         |--      |AlexNet|   --|      --|
 |Arria-10 1150   |--         |--      |AlexNet|   --|      --|
 |Cyclone-V SEA5  |9.24GOPS   |6.6fps  |AlexNet|   68| V=8,L=8,GP_X=7|
 |Virtex-7 690T   |--         |--      |AlexNet|   --|      --|
+
 *Note: parameters V, L, GP_X refers to VEC_SIZE, LANE_NUM, and CONV_GP_SIZE_X, respectively*
 
 
