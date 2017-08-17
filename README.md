@@ -16,7 +16,8 @@ For users who are using Xilinx's SDx environments, it is recommended to use the 
 For more detailed user instructions, please refer to the [docs](https://github.com/doonny/PipeCNN/tree/master/documents).
 
 ## Boards and Performances
-Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) and [SDSoc](https://www.xilinx.com/products/design-tools/software-zone/sdsoc.html) development environments v2017.1 are used. PipeCNN has been tested on the following FPGA boards/platforms, and the achieved performances are reported in Table-I.
+Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) and [SDSoc](https://www.xilinx.com/products/design-tools/software-zone/sdsoc.html) development environments v2017.1 are used. PipeCNN has been tested on the following FPGA boards/platforms, and the achieved performances are reported in Table-I. We welcome other vendors/researches to provide performance and cost information on other FPGA platforms/boards.
+
 
 * Terasic's [DE5-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=179&No=727) (Stratix-IV A7 FPGA)
 * Terasic's [DE5a-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=251&No=988) (Arria-10 1150 FPGA)
@@ -25,16 +26,14 @@ Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-so
 * AlphaData's [ADM-PCIE-7V3](http://www.alpha-data.com/dcp/products.php?product=adm-pcie-7v3) (Virtex-7 690T FPGA)
 
 *Table-I. Performance Measured and Hardware Resource Concumed*
+|Platform|Performance|Speed|CNN Model|DSP Consumed|Configuration|
+|:-|:-:|:-:|:-:|:-:|:-:|
+|Stratix-V A7    |--         |--      |AlexNet|   --|      --|
+|Arria-10 1150   |--         |--      |AlexNet|   --|      --|
+|Cyclone-V SEA5  |9.24GOPS   |6.6fps  |AlexNet|   68| V=8,L=8,GP_X=7|
+|Virtex-7 690T   |--         |--      |AlexNet|   --|      --|
+*Note: parameters V, L, GP_X refers to VEC_SIZE, LANE_NUM, and CONV_GP_SIZE_X, respectively*
 
-|Platform|Performance|Speed|CNN Model|DSP Consumed|
-|:-|:-:|:-:|:-:|:-:|
-|Stratix-V A7    |--         |--      |AlexNet|   --|
-|Arria-10 1150   |--         |--      |AlexNet|   --|
-|Cyclone-V SEA5  |--         |--      |AlexNet|   --|
-|Cyclone-V SXC6  |--         |--      |AlexNet|   --|
-|Virtex-7 690T   |--         |--      |AlexNet|   --|
-
-We welcome other vendors/researches to provide performance and cost information on other FPGA platforms/boards.
 
 
 ## Update Plans

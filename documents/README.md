@@ -1,12 +1,11 @@
-## User Instructions
-Before starting to use this project, you need to install Altera's OpenCL SDK toolset on a Linux or Windows desktop computer, on which a supported FPGA board is correctly installed. You also need to prepare several binary files which contain test data (trained nueral network models and image data) to run image classification (The files are too large to be included here). Integration with Caffe and OpenCV remains to be done. However, there is one usefull tool that can be used to prepare these files:
-```
-https://github.com/pmgysel/alexnet-forwardpath
-```
+# User Instructions
 
-After all things are ready, run the makefile included in this project, and it will take around one hour to finish all the compilations. Then, there will be two files generated as
-* *run.exe*
-* *conv.aocx*
+## How to run PipeCNN
+Before starting to use this project, you need to install Altera or Xilinx's OpenCL SDK toolset on a Linux desktop computer, on which a supported FPGA board is also correctly installed. Clone PipeCNN from [github](https://github.com/doonny/PipeCNN), and download the test vector and golden reference files from PipeCNN's own [ModelZoo](https://github.com/doonny/PipeCNN/tree/master/data). Put all the data files in the ./data folder.
+
+After all things are ready, first enter the ./RTL folder, run the makefile (simply type *make*). This would generate the necessary RTL libraries used by PipeCNN. Secondly, back to the main project folder, run the main makefile provided, and it will take around one hour to finish all the compilations. Finally, there will be two files generated as follow:
+* *run.exe* (host executable)
+* *conv.aocx* (fpga bitstream)
 
 Simply start the accelerator by typing
 ```
@@ -15,21 +14,23 @@ Simply start the accelerator by typing
 
 The results will be like this:
 ```
-*************************************************
+***************************************************
 PipeCNN: An OpenCL-Based FPGA Accelerator for CNNs 
-*************************************************
-61063552 total float weights read 
-618348 bytes image read 
+***************************************************
+
+61063552 total weights read 
+154587 bytes image read 
 1024 total output reference read 
+
 
 Platform: Altera SDK for OpenCL
 Using 1 device(s)
-  Device 0: de5net_a7 : Altera's Preferred Board
-Device OpenCL Version: OpenCL 1.0 Altera SDK for OpenCL, Version 15.1
+  Device 0: de1soc_sharedonly : Cyclone V SoC Development Kit
+Device OpenCL Version: OpenCL 1.0 Altera SDK for OpenCL, Version 16.0
 Device Max Compute Units: 1
 Device Max WorkGroup Size: 2147483647
 Device Max WorkItem Size: 2147483647
-Device Global Memory Size: 4096 MBytes
+Device Global Memory Size: 512 MBytes
 Device Local Memory Size: 16 KBytes
 Device Max Clock Freq: 1000 Mhz
 
@@ -37,77 +38,77 @@ Loading kernel/binary from file conv.aocx
 
 Executing Layer 1:
 
-Launching kernel MemRd with local size: 11, 11, 1  (global size: 605, 605, 6)
+Launching single work-item kernel winbuffer
 
 Launching single work-item kernel Conv
 
 Launching single work-item kernel Pooling
 
-Launching kernel MemWr with local size: 1, 1, 1  (global size: 27, 27, 6)
+Launching kernel MemWr with local size: 1, 1, 8  (global size: 27, 27, 96)
 
 Launching kernel lrn with local size: 1, 1, 12  (global size: 27, 27, 12)
 
 Executing Layer 2:
 
-Launching kernel MemRd with local size: 5, 5, 6  (global size: 135, 135, 96)
+Launching single work-item kernel winbuffer
 
 Launching single work-item kernel Conv
 
 Launching single work-item kernel Pooling
 
-Launching kernel MemWr with local size: 1, 1, 1  (global size: 13, 13, 16)
+Launching kernel MemWr with local size: 1, 1, 8  (global size: 13, 13, 256)
 
 Launching kernel lrn with local size: 1, 1, 32  (global size: 13, 13, 32)
 
 Executing Layer 3:
 
-Launching kernel MemRd with local size: 3, 3, 32  (global size: 39, 39, 768)
+Launching single work-item kernel winbuffer
 
 Launching single work-item kernel Conv
 
-Launching kernel MemWr with local size: 1, 1, 1  (global size: 13, 13, 24)
+Launching kernel MemWr with local size: 1, 1, 8  (global size: 13, 13, 384)
 
 Executing Layer 4:
 
-Launching kernel MemRd with local size: 3, 3, 24  (global size: 39, 39, 576)
+Launching single work-item kernel winbuffer
 
 Launching single work-item kernel Conv
 
-Launching kernel MemWr with local size: 1, 1, 1  (global size: 13, 13, 24)
+Launching kernel MemWr with local size: 1, 1, 8  (global size: 13, 13, 384)
 
 Executing Layer 5:
 
-Launching kernel MemRd with local size: 3, 3, 24  (global size: 39, 39, 384)
+Launching single work-item kernel winbuffer
 
 Launching single work-item kernel Conv
 
 Launching single work-item kernel Pooling
 
-Launching kernel MemWr with local size: 1, 1, 1  (global size: 6, 6, 16)
+Launching kernel MemWr with local size: 1, 1, 8  (global size: 6, 6, 256)
 
 Executing Layer 6:
 
-Launching kernel MemRd with local size: 6, 6, 32  (global size: 24, 24, 8192)
+Launching single work-item kernel winbuffer
 
 Launching single work-item kernel Conv
 
-Launching kernel MemWr with local size: 1, 1, 1  (global size: 4, 4, 256)
+Launching kernel MemWr with local size: 1, 1, 8  (global size: 1, 1, 4096)
 
 Executing Layer 7:
 
-Launching kernel MemRd with local size: 1, 1, 512  (global size: 4, 4, 131072)
+Launching single work-item kernel winbuffer
 
 Launching single work-item kernel Conv
 
-Launching kernel MemWr with local size: 1, 1, 1  (global size: 4, 4, 256)
+Launching kernel MemWr with local size: 1, 1, 8  (global size: 1, 1, 4096)
 
 Executing Layer 8:
 
-Launching kernel MemRd with local size: 1, 1, 512  (global size: 4, 4, 32768)
+Launching single work-item kernel winbuffer
 
 Launching single work-item kernel Conv
 
-Launching kernel MemWr with local size: 1, 1, 1  (global size: 4, 4, 64)
+Launching kernel MemWr with local size: 1, 1, 8  (global size: 1, 1, 1024)
 
 Copyed all batched results from fc_2 buffers.
 
@@ -118,69 +119,91 @@ Done !!!
 
 Performance Summary
 
-Total runtime: 0.857099s 
+Total runtime: 0.154791s 
 
 Kernel runtime summary:
   Layer-1:
-    MemRd: 12.348 ms
-    Conv : 12.325 ms
-    Pool : 12.302 ms
-    MemWr: 12.282 ms
-    Lrn  : 0.893 ms
+    Prepare: 0.043391s
+
+    MemRd: 41.686 ms
+    Conv : 41.557 ms
+    Pool : 41.491 ms
+    MemWr: 41.418 ms
+    Lrn  : 1.197 ms
   Layer-2:
-    MemRd: 9.919 ms
-    Conv : 9.881 ms
-    Pool : 9.840 ms
-    MemWr: 9.805 ms
-    Lrn  : 0.300 ms
+    Prepare: 0.034802s
+
+    MemRd: 34.120 ms
+    Conv : 33.993 ms
+    Pool : 33.919 ms
+    MemWr: 33.848 ms
+    Lrn  : 0.416 ms
   Layer-3:
-    MemRd: 6.866 ms
-    Conv : 6.809 ms
+    Prepare: 0.023367s
+
+    MemRd: 23.173 ms
+    Conv : 23.057 ms
     Pool : 0.000 ms
-    MemWr: 6.746 ms
+    MemWr: 22.985 ms
     Lrn  : 0.000 ms
   Layer-4:
-    MemRd: 5.202 ms
-    Conv : 5.128 ms
+    Prepare: 0.017615s
+
+    MemRd: 17.423 ms
+    Conv : 17.307 ms
     Pool : 0.000 ms
-    MemWr: 5.052 ms
+    MemWr: 17.232 ms
     Lrn  : 0.000 ms
   Layer-5:
-    MemRd: 3.532 ms
-    Conv : 3.450 ms
-    Pool : 3.364 ms
-    MemWr: 3.293 ms
+    Prepare: 0.011972s
+
+    MemRd: 11.769 ms
+    Conv : 11.631 ms
+    Pool : 11.540 ms
+    MemWr: 11.461 ms
     Lrn  : 0.000 ms
   Layer-6:
-    MemRd: 4.842 ms
-    Conv : 4.837 ms
+    Prepare: 0.014695s
+
+    MemRd: 14.493 ms
+    Conv : 14.364 ms
     Pool : 0.000 ms
-    MemWr: 4.831 ms
+    MemWr: 14.279 ms
     Lrn  : 0.000 ms
   Layer-7:
-    MemRd: 1.096 ms
-    Conv : 1.090 ms
+    Prepare: 0.006769s
+
+    MemRd: 6.565 ms
+    Conv : 6.433 ms
     Pool : 0.000 ms
-    MemWr: 1.084 ms
+    MemWr: 6.353 ms
     Lrn  : 0.000 ms
   Layer-8:
-    MemRd: 0.282 ms
-    Conv : 0.276 ms
+    Prepare: 0.001983s
+
+    MemRd: 1.782 ms
+    Conv : 1.648 ms
     Pool : 0.000 ms
-    MemWr: 0.266 ms
+    MemWr: 1.558 ms
     Lrn  : 0.000 ms
 
-Total kernel runtime 700.753 ms 
-Batch size = 16, average process time per batch: 43.797 ms 
+Total kernel runtime 149.988 ms 
+Batch size = 1, average process time per batch: 149.988 ms 
 
 Start verifying results ...
-Selected item = 3 from the combined batch results in fc buffers
-Batch Size=16, verifying NO.3 batch item (indx= 3, 0) ...
-Check Pass
+Selected item = 0 from the combined batch results in fc buffers
+
+Check Pass !!!
+
+The inference result is n02123045 tabby, tabby cat   (the prob is 56.00) 
 
 ```
-Note that current host code only read one image file which is reused for each batch process.
+## Notes
 
+* Current host code only read one image file (in binary or .jpg) which is reused for each batch process.
+* If you are using ARM-based SoC FPGA devices, please change *PLATFORM = x86* in the makefile to *arm32*.
+* If you want to run software simulations, please change *FLOW = hw* in the makefile to *sw_emu*, and source setup_emu.sh before running.
+* For Xilinx FPGAs, it is recommanded to use the IDE enviroment rather than makefile-based flow.
 
 ## Configurations
 Configuration of a new implementation with different performance and hardware resource utilizations is controlled by a header file located in *device/hw_param.cl*. Change the following macros

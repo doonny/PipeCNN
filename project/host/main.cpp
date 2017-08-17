@@ -28,7 +28,7 @@
 using namespace std;
 using namespace ocl_util;
 
-typedef  char  DTYPE;
+typedef  signed char  DTYPE;
 
 //----------- Design Parameters --------------//
 // select what platform is used
