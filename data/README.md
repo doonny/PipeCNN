@@ -344,6 +344,51 @@ The weights are quantilized with 8-bit precisions, and the model quantization is
    </tr>
 </table>
 
+## How to prepare the CNN models for PipeCNN
+
+* Install [Caffe](http://caffe.berkeleyvision.org/) and use the following matlab script to extract the CNN model (assuming we are dealing with caffenet)
+```
+caffe.set_mode_cpu();
+
+model = './models/bvlc_reference_caffenet/deploy.prototxt';
+weights = './models/bvlc_reference_caffenet.caffemodel';
+
+net = caffe.Net(model, weights, 'test');
+
+netparams = {{net.params('conv1',1).get_data(),net.params('conv1',2).get_data()}, ...
+			{net.params('conv2',1).get_data(),net.params('conv2',2).get_data()}, ...
+			{net.params('conv3',1).get_data(),net.params('conv3',2).get_data()}, ...
+			{net.params('conv4',1).get_data(),net.params('conv4',2).get_data()}, ...
+			{net.params('conv5',1).get_data(),net.params('conv5',2).get_data()}, ...
+			{net.params('fc6',1).get_data(),net.params('fc6',2).get_data()}, ...
+			{net.params('fc7',1).get_data(),net.params('fc7',2).get_data()}, ...
+			{net.params('fc8',1).get_data(),net.params('fc8',2).get_data()}};
+```
+
+* Quantize the extracted mode (stored in netparams) to fixed-point weight and bias. Matlab's Fixed-point toolbox should be installed. The word length and fractional bit length are set according to the tables in previous sections.
+```
+WeightWidth    = [ 8;  8;  8;  8;  8;  8;  8;  8];
+WeightFrac     = [ 8;  8;  8;  8;  8; 11; 10; 10];
+
+MathType   = fimath('RoundingMethod', 'Nearest', 'OverflowAction', 'Saturate', 'ProductMode', 'FullPrecision', 'SumMode', 'FullPrecision');
+
+for i=1:8
+	WeightType{i}  = numerictype('Signed',1, 'WordLength', WeightWidth(i), 'FractionLength', WeightFrac(i));
+	weight{i}  = fi(netParams.netparams{i}{1}, WeightType{i}, MathType);
+	bias{i}    = fi(netParams.netparams{i}{2}, WeightType{i}, MathType);
+end
+
+```
+
+* Combine and store the weights and bias as a single binary file.
+```
+fid = fopen('weights.dat', 'w');
+for i=1:8
+    fwrite(fid, storedInteger(weight{i}), 'int8');
+    fwrite(fid, storedInteger(bias{i}), 'int8');
+end
+fclose(fid);
+```
 
 
 ## Notes:
