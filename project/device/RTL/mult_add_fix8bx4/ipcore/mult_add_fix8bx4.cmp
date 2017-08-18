@@ -1,0 +1,15 @@
+	component mult_add_fix8bx4 is
+		port (
+			result  : out std_logic_vector(17 downto 0);                    -- result
+			dataa_0 : in  std_logic_vector(7 downto 0)  := (others => 'X'); -- dataa_0
+			dataa_1 : in  std_logic_vector(7 downto 0)  := (others => 'X'); -- dataa_1
+			dataa_2 : in  std_logic_vector(7 downto 0)  := (others => 'X'); -- dataa_2
+			dataa_3 : in  std_logic_vector(7 downto 0)  := (others => 'X'); -- dataa_3
+			datab_0 : in  std_logic_vector(7 downto 0)  := (others => 'X'); -- datab_0
+			datab_1 : in  std_logic_vector(7 downto 0)  := (others => 'X'); -- datab_1
+			datab_2 : in  std_logic_vector(7 downto 0)  := (others => 'X'); -- datab_2
+			datab_3 : in  std_logic_vector(7 downto 0)  := (others => 'X'); -- datab_3
+			clock0  : in  std_logic                     := 'X'              -- clock0
+		);
+	end component mult_add_fix8bx4;
+

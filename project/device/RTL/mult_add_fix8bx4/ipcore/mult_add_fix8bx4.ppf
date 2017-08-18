@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pinplan
+ variation_name="mult_add_fix8bx4"
+ megafunction_name="ALTERA_MULT_ADD"
+ intended_family="Stratix V"
+ specifies="all_ports">
+ <global>
+  <pin name="result[17..0]" direction="output" scope="external" />
+  <pin name="dataa_0[7..0]" direction="input" scope="external" />
+  <pin name="dataa_1[7..0]" direction="input" scope="external" />
+  <pin name="dataa_2[7..0]" direction="input" scope="external" />
+  <pin name="dataa_3[7..0]" direction="input" scope="external" />
+  <pin name="datab_0[7..0]" direction="input" scope="external" />
+  <pin name="datab_1[7..0]" direction="input" scope="external" />
+  <pin name="datab_2[7..0]" direction="input" scope="external" />
+  <pin name="datab_3[7..0]" direction="input" scope="external" />
+  <pin name="clock0" direction="input" scope="external" />
+ </global>
+</pinplan>

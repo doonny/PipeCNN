@@ -1,0 +1,148 @@
+/*
+WARNING: Do NOT edit the input and output ports in this file in a text
+editor if you plan to continue editing the block that represents it in
+the Block Editor! File corruption is VERY likely to occur.
+*/
+/*
+Copyright (C) 1991-2016 Altera Corporation. All rights reserved.
+Your use of Altera Corporation's design tools, logic functions 
+and other software and tools, and its AMPP partner logic 
+functions, and any output files from any of the foregoing 
+(including device programming or simulation files), and any 
+associated documentation or information are expressly subject 
+to the terms and conditions of the Altera Program License 
+Subscription Agreement, the Altera Quartus Prime License Agreement,
+the Altera MegaCore Function License Agreement, or other 
+applicable license agreement, including, without limitation, 
+that your use is for the sole purpose of programming logic 
+devices manufactured by Altera and sold by Altera or its 
+authorized distributors.  Please refer to the applicable 
+agreement for further details.
+*/
+(header "symbol" (version "1.1"))
+(symbol
+	(rect 0 0 240 424)
+	(text "mult_add_fix8bx4" (rect 68 -1 139 11)(font "Arial" (font_size 10)))
+	(text "inst" (rect 8 408 20 420)(font "Arial" ))
+	(port
+		(pt 0 72)
+		(input)
+		(text "dataa_0[7..0]" (rect 0 0 51 12)(font "Arial" (font_size 8)))
+		(text "dataa_0[7..0]" (rect 4 61 82 72)(font "Arial" (font_size 8)))
+		(line (pt 0 72)(pt 80 72)(line_width 3))
+	)
+	(port
+		(pt 0 112)
+		(input)
+		(text "dataa_1[7..0]" (rect 0 0 50 12)(font "Arial" (font_size 8)))
+		(text "dataa_1[7..0]" (rect 4 101 82 112)(font "Arial" (font_size 8)))
+		(line (pt 0 112)(pt 80 112)(line_width 3))
+	)
+	(port
+		(pt 0 152)
+		(input)
+		(text "dataa_2[7..0]" (rect 0 0 51 12)(font "Arial" (font_size 8)))
+		(text "dataa_2[7..0]" (rect 4 141 82 152)(font "Arial" (font_size 8)))
+		(line (pt 0 152)(pt 80 152)(line_width 3))
+	)
+	(port
+		(pt 0 192)
+		(input)
+		(text "dataa_3[7..0]" (rect 0 0 51 12)(font "Arial" (font_size 8)))
+		(text "dataa_3[7..0]" (rect 4 181 82 192)(font "Arial" (font_size 8)))
+		(line (pt 0 192)(pt 80 192)(line_width 3))
+	)
+	(port
+		(pt 0 232)
+		(input)
+		(text "datab_0[7..0]" (rect 0 0 51 12)(font "Arial" (font_size 8)))
+		(text "datab_0[7..0]" (rect 4 221 82 232)(font "Arial" (font_size 8)))
+		(line (pt 0 232)(pt 80 232)(line_width 3))
+	)
+	(port
+		(pt 0 272)
+		(input)
+		(text "datab_1[7..0]" (rect 0 0 50 12)(font "Arial" (font_size 8)))
+		(text "datab_1[7..0]" (rect 4 261 82 272)(font "Arial" (font_size 8)))
+		(line (pt 0 272)(pt 80 272)(line_width 3))
+	)
+	(port
+		(pt 0 312)
+		(input)
+		(text "datab_2[7..0]" (rect 0 0 51 12)(font "Arial" (font_size 8)))
+		(text "datab_2[7..0]" (rect 4 301 82 312)(font "Arial" (font_size 8)))
+		(line (pt 0 312)(pt 80 312)(line_width 3))
+	)
+	(port
+		(pt 0 352)
+		(input)
+		(text "datab_3[7..0]" (rect 0 0 51 12)(font "Arial" (font_size 8)))
+		(text "datab_3[7..0]" (rect 4 341 82 352)(font "Arial" (font_size 8)))
+		(line (pt 0 352)(pt 80 352)(line_width 3))
+	)
+	(port
+		(pt 0 392)
+		(input)
+		(text "clock0" (rect 0 0 24 12)(font "Arial" (font_size 8)))
+		(text "clock0" (rect 4 381 40 392)(font "Arial" (font_size 8)))
+		(line (pt 0 392)(pt 80 392)(line_width 1))
+	)
+	(port
+		(pt 240 72)
+		(output)
+		(text "result[17..0]" (rect 0 0 44 12)(font "Arial" (font_size 8)))
+		(text "result[17..0]" (rect 183 61 261 72)(font "Arial" (font_size 8)))
+		(line (pt 240 72)(pt 160 72)(line_width 3))
+	)
+	(drawing
+		(text "result" (rect 161 43 358 99)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "result" (rect 133 67 302 144)(font "Arial" (color 0 0 0)))
+		(text "dataa_0" (rect 34 43 110 99)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "dataa_0" (rect 85 67 212 144)(font "Arial" (color 0 0 0)))
+		(text "dataa_1" (rect 36 83 114 179)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "dataa_1" (rect 85 107 212 224)(font "Arial" (color 0 0 0)))
+		(text "dataa_2" (rect 34 123 110 259)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "dataa_2" (rect 85 147 212 304)(font "Arial" (color 0 0 0)))
+		(text "dataa_3" (rect 34 163 110 339)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "dataa_3" (rect 85 187 212 384)(font "Arial" (color 0 0 0)))
+		(text "datab_0" (rect 34 203 110 419)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "datab_0" (rect 85 227 212 464)(font "Arial" (color 0 0 0)))
+		(text "datab_1" (rect 36 243 114 499)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "datab_1" (rect 85 267 212 544)(font "Arial" (color 0 0 0)))
+		(text "datab_2" (rect 34 283 110 579)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "datab_2" (rect 85 307 212 624)(font "Arial" (color 0 0 0)))
+		(text "datab_3" (rect 34 323 110 659)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "datab_3" (rect 85 347 212 704)(font "Arial" (color 0 0 0)))
+		(text "clock0" (rect 45 363 126 739)(font "Arial" (color 128 0 0)(font_size 9)))
+		(text "clock0" (rect 85 387 206 784)(font "Arial" (color 0 0 0)))
+		(text " altera_mult_add " (rect 168 408 438 826)(font "Arial" ))
+		(line (pt 80 32)(pt 160 32)(line_width 1))
+		(line (pt 160 32)(pt 160 408)(line_width 1))
+		(line (pt 80 408)(pt 160 408)(line_width 1))
+		(line (pt 80 32)(pt 80 408)(line_width 1))
+		(line (pt 159 52)(pt 159 76)(line_width 1))
+		(line (pt 158 52)(pt 158 76)(line_width 1))
+		(line (pt 81 52)(pt 81 76)(line_width 1))
+		(line (pt 82 52)(pt 82 76)(line_width 1))
+		(line (pt 81 92)(pt 81 116)(line_width 1))
+		(line (pt 82 92)(pt 82 116)(line_width 1))
+		(line (pt 81 132)(pt 81 156)(line_width 1))
+		(line (pt 82 132)(pt 82 156)(line_width 1))
+		(line (pt 81 172)(pt 81 196)(line_width 1))
+		(line (pt 82 172)(pt 82 196)(line_width 1))
+		(line (pt 81 212)(pt 81 236)(line_width 1))
+		(line (pt 82 212)(pt 82 236)(line_width 1))
+		(line (pt 81 252)(pt 81 276)(line_width 1))
+		(line (pt 82 252)(pt 82 276)(line_width 1))
+		(line (pt 81 292)(pt 81 316)(line_width 1))
+		(line (pt 82 292)(pt 82 316)(line_width 1))
+		(line (pt 81 332)(pt 81 356)(line_width 1))
+		(line (pt 82 332)(pt 82 356)(line_width 1))
+		(line (pt 81 372)(pt 81 396)(line_width 1))
+		(line (pt 82 372)(pt 82 396)(line_width 1))
+		(line (pt 0 0)(pt 240 0)(line_width 1))
+		(line (pt 240 0)(pt 240 424)(line_width 1))
+		(line (pt 0 424)(pt 240 424)(line_width 1))
+		(line (pt 0 0)(pt 0 424)(line_width 1))
+	)
+)

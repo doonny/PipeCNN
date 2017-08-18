@@ -1,0 +1,72 @@
+<RTL_SPEC>
+  <!-- 'name' is how this function will be called from an OpenCL kernel.
+       'module' is the top-level HDL module name that implements the function. -->
+  <FUNCTION name="mult_add_fix8bx4" module="mult_add_fix8bx4">
+    <ATTRIBUTES>
+      <!-- Setting IS_STALL_FREE="yes" means the function neither generates stalls internally nor can it 
+           properly handle incoming stalls (because it simply ignores its stall/valid inputs). If set
+           to "no", the function must properly handle stall/valid signals. 
+           IS_STALL_FREE="yes" requires IS_FIXED_LATENCY="yes". -->
+      <IS_STALL_FREE value="yes"/>
+      
+      <!-- If the function always takes known number of clock cycles (specified by EXPECTED_LATENCY)
+           to compute its output, set IS_FIXED_LATENCY to "yes".
+           Note that IS_FIXED_LATENCY could be "yes" while IS_STALL_FREE="no". Such a function would
+           produce its output in fixed number of cycles but could still deal with stall signals 
+           properly.  -->
+      <IS_FIXED_LATENCY value="yes"/>
+      
+      <!-- Expected latency of this function. If IS_FIXED_LATENCY="yes", this is the number of 
+           pipeline stages inside the function. In this case, EXPECTED_LATENCY must be set exactly
+           to the latency of the function, otherwise incorrect hardware will result.
+           For variable latency functions, pipeline around this function will be balanced to this 
+           value. Setting EXPECTED_LATENCY to a different value will still produce correct results
+           but may affect number of stalls inside the pipeline. -->
+      <EXPECTED_LATENCY value="2"/>
+      
+      <!-- Number of multiple inputs that can be processed simultaneously by this function.
+           If IS_STALL_FREE="no" and IS_FIXED_LATENCY="no", the CAPACITY value must be specified.
+           Otherwise, it is not required.
+           If CAPACITY is strictly less than EXPECTED_LATENCY, the compiler will automatically 
+           insert capacity-balancing FIFOs after this function when required. -->
+      <CAPACITY value="1"/>
+      
+      <!-- Set to "yes" to indicate that this function has side-effects. Calls to functions
+           with side-effects will not be optimized away and only valid data will be fed
+           to such functions.
+           Functions that have internal state or talk to external memories are examples of functions
+           with side-effects. -->
+      <HAS_SIDE_EFFECTS value="no"/>
+            
+      <!-- Set to "yes" to allow multiple instances of this function to be merged by the compiler.
+           This property should be set to "yes". 
+           Note that marking function with HAS_SIDE_EFFECTS does not prevent merging. -->
+      <ALLOW_MERGING value="yes"/>
+    </ATTRIBUTES>
+    <INTERFACE>
+      <AVALON port="clock" type="clock"/>
+      <AVALON port="resetn" type="resetn"/>
+      <AVALON port="ivalid" type="ivalid"/>
+      <AVALON port="iready" type="iready"/>
+      <AVALON port="ovalid" type="ovalid"/>
+      <AVALON port="oready" type="oready"/>
+      <INPUT  port="dataa_0" width="8"/>
+      <INPUT  port="datab_0" width="8"/>
+      <INPUT  port="dataa_1" width="8"/>
+      <INPUT  port="datab_1" width="8"/>
+      <INPUT  port="dataa_2" width="8"/>
+      <INPUT  port="datab_2" width="8"/>
+      <INPUT  port="dataa_3" width="8"/>
+      <INPUT  port="datab_3" width="8"/>
+      <OUTPUT port="result"  width="32"/>
+    </INTERFACE>
+    <C_MODEL>
+      <FILE name="c_model.cl" />
+    </C_MODEL>
+    <REQUIREMENTS>
+      <FILE name="mult_add_fix8bx4/mult_add_fix8bx4.v" />
+      <FILE name="mult_add_fix8bx4/ipcore/mult_add_fix8bx4/mult_add_fix8bx4_0002.v" />
+   </REQUIREMENTS>
+  </FUNCTION>
+</RTL_SPEC>
+
