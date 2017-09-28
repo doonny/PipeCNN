@@ -11,7 +11,7 @@
  *   - Dong Wang, wangdong@m.bjtu.edu.cn
  *
  * History:
- *   - v2.2 Fixed-point Implementation
+ *   - v1.3 Win-Buffer-Based Implementation
  * ------------------------------------
  *
  *   Copyright (C) 2016, Institute of Information Science,
@@ -33,6 +33,7 @@
 
 #define USE_ROM 
 
+// The following macros are used for debug
 //#define DEBUG_MEMRD
 //#define DEBUG_CONV
 //#define DEBUG_POOL
@@ -65,9 +66,9 @@ typedef struct {
 } channel_scal;
 
 
-channel channel_vec    data_ch    __attribute__((depth(CHN_DEPTH)));
-channel channel_vec    weight_ch  __attribute__((depth(CHN_DEPTH)));
-channel channel_scal   bias_ch    __attribute__((depth(CHN_DEPTH)));
+channel channel_vec    data_ch    __attribute__((depth(0)));
+channel channel_vec    weight_ch  __attribute__((depth(0)));
+channel channel_scal   bias_ch    __attribute__((depth(8)));
 channel channel_scal   conv_ch    __attribute__((depth(CHN_DEPTH)));
 channel channel_scal   pool_ch    __attribute__((depth(CHN_DEPTH)));
 channel channel_scal   bypass_ch  __attribute__((depth(CHN_DEPTH)));
@@ -80,6 +81,7 @@ MACTYPE mac(lane_data input, lane_data weights)
 	
 	#pragma unroll
 	for(int i=0; i<VEC_SIZE/4; i++){
+		// use packed DSP blocks to improve efficiency
 		output += MASK_MULT & mult_add_fix8bx4(input.data[i*4], weights.data[i*4], input.data[i*4+1], weights.data[i*4+1], input.data[i*4+2], weights.data[i*4+2], input.data[i*4+3], weights.data[i*4+3]);
 	}
 	return output;
@@ -100,91 +102,281 @@ DPTYPE pool_max(DPTYPE a_in, DPTYPE b_in)
 
 // Fetch Data from Global Memory
 __kernel
+__attribute__((task))
+__attribute__((max_global_work_dim(0)))
 void memRead(
 			// Params Ports
 			uchar  data_dim1,
 			uchar  data_dim2,
+			ushort data_dim1xdim2,
 			uchar  weight_dim1,
 			uchar  weight_dim2,
+			ushort weight_dim3,
+			ushort weight_dim4_div_lane, // avoid generating divider
+			uchar  weight_dim1x2,
+			uint   weight_dim1x2x3,
+			uchar  conv_x,
 			uchar  stride,
 			uchar  padding,
 			uchar  split,
+			uchar  group_num_x,
+			uchar  group_num_y,
+			uchar  group_rem_size_x,
+			uint   group_rem_size_xyz,
+			uchar  win_size_x,
+			uchar  win_size_y,
+			uint   win_size_xyz,  
 			// Data Ports
 			__global lane_data    *restrict bottom,
 			__global channel_vec  *restrict weights,
 			__global channel_scal *restrict bias        )
 
 {
-	#ifdef DEBUG_MEMRD
-	ushort global_x = get_global_id(0);
-	ushort global_y = get_global_id(1);
-	uint   global_z = get_global_id(2);
-	#endif
-	
-	uchar  local_x = get_local_id(0); // max size is 11
-	uchar  local_y = get_local_id(1); // max size is 11
-	ushort local_z = get_local_id(2); // max size is 4096
-	uchar  block_x = get_group_id(0); // max size is 227
-	uchar  block_y = get_group_id(1); // max size is 227
-	ushort block_z = get_group_id(2); // max size is 4096
-	uchar  local_size_x = get_local_size(0); // max size is 11
-	uchar  local_size_y = get_local_size(1); // max size is 11
-	ushort local_size_z = get_local_size(2); // max size is 4096
-	uchar  group_size_x = get_num_groups(0); // max size is 227
-	uchar  group_size_y = get_num_groups(1); // max size is 227
-	ushort group_size_z = get_num_groups(2); // max size is 4096
-	
+
+
 	// Input Data, Weights and Bias
 	lane_data     data_vec;
 	channel_vec   data_ch_vec;
 	channel_vec   weight_ch_vec;
 	channel_scal  bias_ch_in;
-	ushort        data_offset;
+	ushort        data_offset = 0; // assuming the 1st layer is not in split
 	
-	// special case, the output feature maps depend on only half the input feature maps
-	if(split==0)
-		data_offset = 0;
-	else if(block_z<(group_size_z>>1))
-		data_offset = 0;	
-	else
-		data_offset = local_size_z;	
+	// virtual loop counters
+	ushort gp_num_x, gp_num_y, out_idx_z;
+	ushort gp_num_x_winbuf, gp_num_y_winbuf, out_idx_z_winbuf;
+	uchar  output_idx_dim1, output_idx_dim2;
+	ushort output_idx_dim3;
+	uchar  win_itm_x, win_itm_y;
+	ushort win_itm_z;
+	
+	uchar  gp_item_idx_x;
 
+	ushort feature_idx_dim1, feature_idx_dim2;
+	ushort feature_idx_dim3;
+
+	uint   item_loop_bound;
 	
-	// fetch weights and bias for the current group
-	if(((block_y*stride<padding) && local_y<padding-block_y*stride)||((((group_size_y-1)-block_y)*stride<padding) && (local_size_y-1-local_y)<padding-((group_size_y-1)-block_y)*stride)||
-		((block_x*stride<padding) && local_x<padding-block_x*stride)||((((group_size_x-1)-block_x)*stride<padding) && (local_size_x-1-local_x)<padding-((group_size_x-1)-block_x)*stride)){
-		// padding with zeros
-		#pragma unroll
-		for(unsigned char vv=0; vv<VEC_SIZE; vv++){
-			data_vec.data[vv] = CZERO;
+	uchar  flag; // ping-pong flag
+	
+	// Ping-pong buffer
+	__local lane_data    win_buffer[2][WIN_BUF_SIZE]; // working sequence 0->1->0->1 ...
+	// Weight buffer
+	__local channel_vec  weight_buffer[WEIGHT_BUF_SIZE];
+
+	// Initialize the winbuf with the data in the first iteration of the group looping (as gp_num_x_winbuf=0, gp_num_y_winbuf=0)
+	for(unsigned short win_itm_z=0; win_itm_z<weight_dim3/VEC_SIZE; win_itm_z++){
+		for(unsigned char  win_itm_y=0; win_itm_y<win_size_y; win_itm_y++){
+			for(unsigned char  win_itm_x=0; win_itm_x<win_size_x; win_itm_x++){
+	
+			feature_idx_dim1 = win_itm_x;
+			feature_idx_dim2 = win_itm_y;
+			feature_idx_dim3 = win_itm_z;
+	
+			// fetch feature map for the current group and caching in win buffer
+			if((feature_idx_dim1>=padding && feature_idx_dim1<data_dim1+padding) && (feature_idx_dim2>=padding && feature_idx_dim2<data_dim2+padding)){
+			
+				data_vec = bottom[data_offset*data_dim1xdim2 + feature_idx_dim3*data_dim1xdim2 + (feature_idx_dim2-padding)*data_dim1 + (feature_idx_dim1-padding)];
+			}
+			else{ // for padding (feature_idx<padding or data_dim+padding<=feature_idx<data_dim+2*padding)
+				// or invalid work-item in the last group set feature map to zeros (feature_idx>=data_dim+2*padding)
+				#pragma unroll
+				for(unsigned char vv=0; vv<VEC_SIZE; vv++){
+					data_vec.data[vv] = CZERO;
+				}
+			}
+			
+			// start from using buffer[0]
+			win_buffer[0][win_itm_z*win_size_y*win_size_x + win_itm_y*win_size_x + win_itm_x] = data_vec;
+
+			}
 		}
 	}
+
+	// reset group virtual loop counters for winbuf loading operations
+	// the gp loop counter for winbuf starts one iteration earlier than global group virtual loop counter
+	// in this iteration, the winbuf is pre-initialized as previous loops shows
+	if(group_num_x==1)
+		gp_num_x_winbuf = 0; // there is only one group for FC mode when batch=1
 	else
-		data_vec = bottom[data_offset*data_dim2*data_dim1 + local_z*data_dim2*data_dim1 + block_y*stride*data_dim1 + (local_y-padding)*data_dim1 + block_x*stride + (local_x-padding)];
-
-	weight_ch_vec = weights[block_z*weight_dim2*weight_dim1*local_size_z + local_z*weight_dim2*weight_dim1 + local_y*weight_dim1 + local_x];
+		gp_num_x_winbuf = 1; // loop start from the second group
+	gp_num_y_winbuf = 0;
+	out_idx_z_winbuf = 0;
 	
-	#pragma unroll
-	for(unsigned char ll=0; ll<LANE_NUM; ll++){
-		data_ch_vec.lane[ll] = data_vec;
-	}
-	write_channel_altera(data_ch, data_ch_vec);		
-	write_channel_altera(weight_ch, weight_ch_vec);		
-	#ifdef DEBUG_MEMRD
-	if(global_y==0 && global_x==0){
-	printf("work-item x=%d, y=%d, z=%d, offset=%d, write data in channel 0=%f\n", global_x, global_y, global_z, data_offset, (float)data_ch_vec.lane[0].data[0]);
-	printf("work-item x=%d, y=%d, z=%d, offset=%d, write weight in channel 0=%f\n", global_x, global_y, global_z, data_offset, (float)weight_ch_vec.lane[0].data[0]);
-	}
-	#endif
+	// reset global group virtual loop counters
+	gp_num_x = 0;
+	gp_num_y = 0;
+	out_idx_z = 0;
+	
+	#pragma ivdep array(weight_buffer)
+	Group:for(unsigned int out_idx_xyz=0; out_idx_xyz<(weight_dim4_div_lane*group_num_y*group_num_x); out_idx_xyz++){
 
-	if(local_z==0 && local_y==0 && local_x==0){
-		bias_ch_in = bias[block_z];
-		write_channel_altera(bias_ch, bias_ch_in);
-		//#ifdef DEBUG_MEMRD
-		//printf("work-item x=%d, y=%d, z=%d, channel =0, write bias=%f\n", global_x, global_y, global_z, bias_ch_in.lane[0]);
-		//#endif
-	}
+		// special case when split==1, the output feature maps depend on only half the input feature maps
+		if(split==0)
+			data_offset = 0;
+		else if(out_idx_z_winbuf<(weight_dim4_div_lane>>1)) // the lower half of the output feature maps depend on the lower half of the input
+			data_offset = 0;
+		else
+			data_offset = weight_dim3/VEC_SIZE;	// the upper half of the output feature maps depend on the upper half of the input
+	
+				flag = out_idx_xyz & 0x01; //ping-pong flag
+				
+				// reset output loop counters
+				output_idx_dim1 = 0;
+				output_idx_dim2 = 0;
+				output_idx_dim3 = 0;
+				// reset in-group item counters 
+				gp_item_idx_x = 0;
+				
+				// reset input winbuffer loop counters
+				win_itm_x = 0;
+				win_itm_y = 0;
+				win_itm_z = 0;
+				
+				
+				if(gp_num_x==group_num_x-1) // last group in each row
+					item_loop_bound = win_size_x>=group_rem_size_x?(win_size_xyz/VEC_SIZE):(group_rem_size_xyz/VEC_SIZE);
+				else{
+					item_loop_bound = (weight_dim1x2x3*CONV_GP_SIZE_Y*CONV_GP_SIZE_X/VEC_SIZE);
+				}
 
+				#pragma ivdep array(weight_buffer)
+				Item:for(unsigned int  win_itm_xyz=0; win_itm_xyz<item_loop_bound; win_itm_xyz++){
+
+							// Winbuffer loading operations
+							if(win_itm_z<weight_dim3/VEC_SIZE){
+
+								feature_idx_dim1 = win_itm_x+gp_num_x_winbuf*CONV_GP_SIZE_X*stride;
+								feature_idx_dim2 = win_itm_y+gp_num_y_winbuf*CONV_GP_SIZE_Y*stride;
+								feature_idx_dim3 = win_itm_z;
+
+								if((feature_idx_dim1>=padding && feature_idx_dim1<data_dim1+padding) && (feature_idx_dim2>=padding && feature_idx_dim2<data_dim2+padding)){
+								
+									data_vec = bottom[data_offset*data_dim1xdim2 + feature_idx_dim3*data_dim1xdim2 + (feature_idx_dim2-padding)*data_dim1 + (feature_idx_dim1-padding)];
+																	}
+								else{
+									#pragma unroll
+									for(unsigned char vv=0; vv<VEC_SIZE; vv++){
+										data_vec.data[vv] = CZERO;
+									}
+								}
+								
+								win_buffer[(~flag)&0x01][win_itm_z*win_size_y*win_size_x + win_itm_y*win_size_x + win_itm_x] = data_vec;
+
+								// used as loop counters
+								if((win_itm_z==weight_dim3/VEC_SIZE-1) && (win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1))
+									win_itm_z = 0;
+								else if((win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1))
+									win_itm_z++;
+
+								if((win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1))
+									win_itm_y = 0;
+								else if(win_itm_x==win_size_x-1)
+									win_itm_y++;
+								
+								if(win_itm_x==win_size_x-1)
+									win_itm_x = 0;
+								else
+									win_itm_x++;
+									
+							}
+							
+							// Load weight into weight buffer
+							if(gp_item_idx_x==0){
+								
+								weight_ch_vec = weights[out_idx_z*weight_dim1x2x3/VEC_SIZE + output_idx_dim3*weight_dim1x2 + output_idx_dim2*weight_dim1 + output_idx_dim1];
+								weight_buffer[output_idx_dim3*weight_dim2*weight_dim1 + output_idx_dim2*weight_dim1 + output_idx_dim1] = weight_ch_vec;
+
+							}
+							
+							// Only output data for valid convolution work-items
+							// In this version, grouping is only performed in row (x) direction
+							if(gp_num_x*CONV_GP_SIZE_X+gp_item_idx_x<conv_x){
+                    
+								if(output_idx_dim1==0 && output_idx_dim2==0 && output_idx_dim3==0){
+									bias_ch_in = bias[out_idx_z];
+									write_channel_altera(bias_ch, bias_ch_in);
+									//#ifdef DEBUG_MEMRD
+									//printf("work-item x=%d, y=%d, z=%d, channel =0, write bias=%f\n", output_idx_dim1, output_idx_dim2, output_idx_dim3, bias_ch_in.lane[0]);
+									//#endif
+								}
+
+								// data
+								data_vec = win_buffer[flag][output_idx_dim3*win_size_y*win_size_x + output_idx_dim2*win_size_x + (output_idx_dim1+gp_item_idx_x*stride)];
+								#pragma unroll
+								for(unsigned char ll=0; ll<LANE_NUM; ll++){
+									data_ch_vec.lane[ll] = data_vec;
+								}
+								write_channel_altera(data_ch, data_ch_vec);	
+								
+								
+								// weight and bias fetcher
+								weight_ch_vec = weight_buffer[output_idx_dim3*weight_dim2*weight_dim1 + output_idx_dim2*weight_dim1 + output_idx_dim1];
+								write_channel_altera(weight_ch, weight_ch_vec);	
+								
+								#ifdef DEBUG_MEMRD
+								//if(gp_num_x==group_num_x-1 && gp_num_y==0 && out_idx_z==0){
+									printf("work-item x=%d, y=%d, z=%d, offset=%d, write data in channel 0=%f\n", output_idx_dim1, output_idx_dim2, output_idx_dim3, data_offset, (float)data_ch_vec.lane[0].data[0]);
+									//printf("work-item x=%d, y=%d, z=%d, write weight in channel 0=%f\n", output_idx_dim1, output_idx_dim2, output_idx_dim3, (float)weight_ch_vec.lane[0].data[0]);
+								//}
+								#endif
+	
+								// used as output loop counters
+								if((output_idx_dim3==weight_dim3/VEC_SIZE-1) && (output_idx_dim2==weight_dim2-1) && (output_idx_dim1==weight_dim1-1)){
+									output_idx_dim3 = 0;
+									gp_item_idx_x++;
+								}
+								else if((output_idx_dim2==weight_dim2-1)&& (output_idx_dim1==weight_dim1-1))
+									output_idx_dim3++;
+								
+								if((output_idx_dim2==weight_dim2-1) && (output_idx_dim1==weight_dim1-1))
+									output_idx_dim2 = 0;
+								else if(output_idx_dim1==weight_dim1-1)
+									output_idx_dim2++;
+	                
+								if(output_idx_dim1==weight_dim1-1)
+									output_idx_dim1 = 0;
+								else
+									output_idx_dim1++;
+
+								}
+
+				}
+
+
+		// used as virtual group loop counters for winbuf loading operations
+		if((out_idx_z_winbuf==weight_dim4_div_lane-1) && (gp_num_y_winbuf==group_num_y-1) && (gp_num_x_winbuf==group_num_x-1))
+			out_idx_z_winbuf = 0;
+		else if((gp_num_y_winbuf==group_num_y-1) && (gp_num_x_winbuf==group_num_x-1))
+			out_idx_z_winbuf++;	
+
+		if((gp_num_y_winbuf==group_num_y-1) && (gp_num_x_winbuf==group_num_x-1))
+			gp_num_y_winbuf = 0;
+		else if(gp_num_x_winbuf==group_num_x-1)
+			gp_num_y_winbuf++;	
+
+		if(gp_num_x_winbuf==group_num_x-1)
+			gp_num_x_winbuf = 0;
+		else
+			gp_num_x_winbuf++;
+		
+		// used as virtual group loop counters
+		if((out_idx_z==weight_dim4_div_lane-1) && (gp_num_y==group_num_y-1) && (gp_num_x==group_num_x-1))
+			out_idx_z = 0;
+		else if((gp_num_y==group_num_y-1) && (gp_num_x==group_num_x-1))
+			out_idx_z++;	
+        
+		if((gp_num_y==group_num_y-1) && (gp_num_x==group_num_x-1))
+			gp_num_y = 0;
+		else if(gp_num_x==group_num_x-1)
+			gp_num_y++;
+        
+		if(gp_num_x==group_num_x-1)
+			gp_num_x = 0;
+		else
+			gp_num_x++;
+
+	}
+	
 	//printf("Kernel 0 lanched !!!\n");
 }
 
@@ -256,9 +448,9 @@ void coreConv(
 				accum_piped[ll][0] = MASK_ACCUM & lane_accum[ll];
 
 				#ifdef DEBUG_CONV
-				if(ll==0 && k==0){
-					printf("dot_cnt=%d data=%f weight=%f (loop=%d, lane= %d, vec=0)\n", k, (float)mac_data.lane[ll].data[0], (float)mac_weight.lane[ll].data[0], j, ll);
-				}
+				//if(ll==0 && k==0){
+				//	printf("dot_cnt=%d data=%f weight=%f (loop=%d, lane= %d, vec=0)\n", k, (float)mac_data.lane[ll].data[0], (float)mac_weight.lane[ll].data[0], j, ll);
+				//}
 				#endif
 			}
 		}// end of conv loop
@@ -273,7 +465,6 @@ void coreConv(
 			}
 			
 			// round and truncate the results to the output precision
-			// note: ((frac_w+frac_din)-frac_dout)) should be checked by host to be a positive number
 			if(conv_out[ll]>=0)
 				conv_sign_exten[ll] = 0x00;
 			else
@@ -303,7 +494,7 @@ void coreConv(
 			#ifdef DEBUG_CONV
 			if(ll==0 && k==0)
 				printf("dot_cnt=%d sum=%f rnd=%f sum_bias=%f final=%f (bias=%f)\n\n", k, (float)conv_out[ll], (float)conv_with_rnd_bit[ll], (float)conv_sum_bias[ll], (float)conv_final[ll], (float)bias[ll]);
-			#endif	
+			#endif
 
 		}
 
@@ -477,6 +668,7 @@ void memWrite(
 			output = read_channel_altera(pool_ch);
 
 		// store the vectorized output into local buffer
+		#pragma unroll
 		for(uchar ll=0; ll<LANE_NUM; ll++){
 			buffer[ll]=output.lane[ll];
 		}
@@ -502,11 +694,11 @@ void memWrite(
 		top[index_z_group*out_dim1x2xbatch*VEC_SIZE + (global_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*VEC_SIZE + (global_x+batch_indx_dim1*out_dim1)*VEC_SIZE + index_z_item] = buffer[local_z];
 
 		#ifdef DEBUG_MEMWR
-		if((global_z-padd_offset) == 0){
+		//if((global_z-padd_offset) == 0){
 			//for(unsigned char ll=0; ll<LANE_NUM; ll++){
 			printf("MemWr results= %f (x=%d, y=%d, z=%d, ll=%d)\n", (float)output.lane[0], global_x, global_y, global_z, 0);
 			//}
-			}
+		//	}
 		#endif
 
 	}
@@ -586,11 +778,16 @@ void lrn(
 	#endif
 	barrier(CLK_LOCAL_MEM_FENCE); // fill all values of the line bufer before reading it
 
-	// Piecewise interpolation pipeline for lrn operation
+	// Piecewise interpolation pipeline for lrn operation (i.e., y=pwlf(x'))
 	for(unsigned char ll=0; ll<VEC_SIZE; ll++){
+		// First Step: Coefficients table looking-up
+		// Calculate x'=sum(x(k)^2) for the pwlf function, x(k)s are from adjacent featuremaps
 		lrn_reg2 = CZERO;
 		#pragma unroll
 		for(char k=-LRN_WIN_SIZE/2; k<=LRN_WIN_SIZE/2; k++){
+			// Convert DPTYPE fixed-point to float
+			// Input data has "frac_dout" fractional bits
+			// Note: current version only support frac_dout<0
 			lrn_cnvt = z_buffer[global_z*VEC_SIZE+ll+k+LRN_WIN_SIZE/2]<<(-frac_dout);
 			lrn_reg1 = convert_float(lrn_cnvt);
 			lrn_reg2 += lrn_reg1 * lrn_reg1;
@@ -601,12 +798,12 @@ void lrn(
 		}
 		convert_ptr = (int*) (&lrn_reg2);
 		expo = (EXP_MASK & (*convert_ptr >> MAN_BITS)) - 127;
-		manti = ((*convert_ptr) & MAN_MASK);
+		manti = ((*convert_ptr) & MAN_MASK); //does not include the implicit 1
 		
 		addr_1 = ((expo-EXP_STEP_MIN)>>EXP_STEP_LOG)<<MAN_INDEX_BITS;
 		addr_2 = (manti>>(MAN_BITS-MAN_INDEX_BITS) & MAN_INDEX_MASK)+1;
 		if(expo<EXP_STEP_MIN)
-			addr = 0;
+			addr = 0; // use the first segment
 		else
 			addr = addr_1+addr_2;
 
@@ -615,8 +812,6 @@ void lrn(
 		lrn_cnvt2 = z_buffer[global_z*VEC_SIZE+ll+LRN_WIN_SIZE/2]<<(-frac_dout);
 		lrn_out = lrn_tmp*convert_float(lrn_cnvt2);
 
-		// Convert float to DPTYPE fixed-point
-		// Note: current version only support frac_din=0 for next layer
 		lrn_buffer[global_z*VEC_SIZE+ll] = convert_char_rte(lrn_out);
 
 		#ifdef DEBUG_LRN

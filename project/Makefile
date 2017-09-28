@@ -5,13 +5,16 @@ HOST_OBJS = $(HOST_SRCS:%.cpp=%.o)
 HOST_INCS = ../common
 HOST_DEBUG =
 
+#if you are loading images from OpenCV interfaces please set to 1
+USE_OPENCV = 0
+
 #set source and target for device
 #supported vendors are xilinx, altera, amd
 VENDOR = altera
 #select the host archecture  x86|arm32
 PLATFORM = x86
 #optinal flows are hw|hw_emu|sw_emu
-FLOW        = hw
+FLOW        = sw_emu
 KERNEL_SRCS = ./device/conv_pipe.cl
 KERNEL_NAME = conv
 KERNEL_DEFS =
@@ -35,11 +38,33 @@ endif
 CROSS-COMPILE = arm-linux-gnueabihf-
 ifeq ($(PLATFORM),x86)
 CXX := g++
+ifeq ($(USE_OPENCV),1)
+#add your OpenCV PATH here
+OCV_INCLUDES = -I/usr/local/include/
+OCV_LIBDIRS = -L/usr/local/lib 
+OCV_LIBS =  -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_ml
+endif
 else ifeq ($(PLATFORM),arm32)
 CXX := $(CROSS-COMPILE)g++
+ifeq ($(USE_OPENCV),1)
+#add your cross compile OpenCV PATH here
+OCV_INCLUDES = -I/usr/local/opencv-arm/include/
+OCV_LIBDIRS = -L/usr/local/opencv-arm/lib 
+OCV_LIBS =  -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_ml
+endif
 endif
 
+#select whether use OpenCV or not
+ifeq ($(USE_OPENCV),1)
+CXXFLAGS = -g -Wall -std=c++11 -DUSE_OPENCV
+else
 CXXFLAGS = -g -Wall -std=c++11
+endif
+
+#select whether manually launch free-run kernels
+ifeq ($(FLOW),sw_emu)
+CXXFLAGS += -DSW_EMU
+endif
 
 ifeq ($(VENDOR),xilinx)
 COMP_CONFIG = -I$(XILINX_SDACCEL)/runtime/include/1_2 -I$(HOST_INCS)  -DFPGA_DEVICE
@@ -90,14 +115,14 @@ host: $(HOST_EXE)
 fpga: $(DEV_EXE)
 
 $(HOST_EXE): $(HOST_OBJS)
-	$(CXX) $(HOST_OBJS) -o $@ $(LINK_CONFIG)
-
+	$(CXX) $(OCV_LIBDIRS) $(OCV_INCLUDES) $(HOST_OBJS) -o $@ $(LINK_CONFIG) $(OCV_LIBS)
+	
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@ $(COMP_CONFIG)
+	$(CXX) $(OCV_LIBDIRS) $(OCV_INCLUDES) $(CXXFLAGS) -c $< -o $@ $(COMP_CONFIG) $(OCV_LIBS)
 
 $(DEV_EXE): $(KERNEL_SRCS)
 	$(OCC) $(OCCFLAGS) $< -o $@
 
 .PHONY: clean
 clean:
-	rm -rf *.xclbin *.aocx *.aoco *.exe xocc* sdaccel* ./device/*.ll ./host/*.o ../common/*.o *.log *.jou
+	rm -rf *.xclbin *.aocx *.aoco *.exe xocc* sdaccel* ./device/*.ll ./host/*.o ../common/*.o *.log *.jou *.mon

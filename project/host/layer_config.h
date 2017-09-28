@@ -1,8 +1,10 @@
 #include "../device/hw_param.cl"
 
+#define NUM_CONFIG_ITEM  25
+
 /*
 // VGG-16 Configuration
-unsigned layer_config[][25] = {{0,
+unsigned layer_config[][NUM_CONFIG_ITEM] = {{0,
 							224, 224, 3, 3, 3, 3, 64, 64,
 							0,
 							224, 224, 64, 1, 1, 0, 1,
@@ -143,7 +145,7 @@ unsigned output_config[3] = {1, 1, 1024};//Layer-16
 
 /*
 // Alexnet Configuration batch=16
-unsigned layer_config[][25] = {{0,
+unsigned layer_config[][NUM_CONFIG_ITEM] = {{0,
 							227, 227, 3, 11, 11, 3, 96, 96,
 							0,
 							55, 55, 96, 4, 0, 0, 1,
@@ -230,58 +232,46 @@ unsigned output_config[3] = {1, 1, 1024};//Layer-8  Note: only one result is ext
  * ------------------------------------------------------------------------
  */
 
-/*
-// Test FC with batch size = 16 only
-unsigned layer_config[][24] = {{4, 4, 9216, 1, 1, 9216, 4096, 4096,
-							0,
-							4, 4, 4096, 0, 0, 0, 1,
-							0, 4, 4, 4096, 0, 0,
-							0,
-							1},//FC-6	
-							{4, 4, 4096, 1, 1, 4096, 4096, 4096,
-							0,
-							4, 4, 4096, 0, 0, 0, 1,
-							0, 4, 4, 4096, 0, 0,
-							0,
-							1},//FC-7
-							{4, 4, 4096, 1, 1, 4096, 1024, 1024,
-							1,
-							4, 4, 1024, 0, 0, 0, 0,
-							0, 4, 4, 1024, 0, 0,
-							0,
-							0}//FC-8
-							};
-
-unsigned input_config[3] = {4, 4, 4096}; //original image size
-
-unsigned output_config[3] = {4, 4, 1024};//Layer-8
-*/
-
-/*					
-// Test FC only
-unsigned layer_config[][24] = {{1, 1, 4096, 1, 1, 4096, 4096, 4096,
-							0,
-							1, 1, 4096, 0, 0, 0, 1,
+ /*	
+// Test FC only (AlexNet fc6-fc8)
+unsigned layer_config[][NUM_CONFIG_ITEM] = {{1,
+							6, 6, 256, 6, 6, 256, 4096, 4096,  // Note: The input size (dim1/dim2) is the combined data size (batched)
+							2,
+							1, 1, 4096, 6, 0, 0, 1,
 							0, 1, 1, 4096, 0, 0,
 							0,
-							1},//FC-7
-							{1, 1, 4096, 1, 1, 4096, 1024, 1024,
-							1,
-							1, 1, 1024, 0, 0, 0, 0,
+							3},//Layer-6 fc
+							{1,
+							1, 1, 4096, 1, 1, 4096, 4096, 4096,
+							3,
+							1, 1, 4096, 1, 0, 0, 1,
+							0, 1, 1, 4096, 0, 0,
+							0,
+							2},//Layer-7 fc
+							{1,
+							1, 1, 4096, 1, 1, 4096, 1024, 1024,
+							2,
+							1, 1, 1024, 1, 0, 0, 0,
 							0, 1, 1, 1024, 0, 0,
 							0,
-							0}//FC-8
+							3}//Layer-8 fc
 							};
 							
-unsigned input_config[3] = {1, 1, 4096}; //original image size
+char precision_config[][3] ={{11, -1,  0},//Layer-6
+							{10,  0,  2},//Layer-7
+							{10,  2,  2}//Layer-8
+							};
+							
+unsigned input_config[3] = {6, 6, 256}; //original image size
 
 unsigned output_config[3] = {1, 1, 1024};//Layer-8
 */
 
+
 /*
 // Test Conv(Relu) without PooL and LRN and batch=1
 // Alexnet Configuration
-unsigned layer_config[][25] = {{0,
+unsigned layer_config[][NUM_CONFIG_ITEM] = {{0,
 							227, 227, 3, 11, 11, 3, 96, 96,
 							0,
 							55, 55, 96, 4, 0, 0, 0, // turn relu on if needed
@@ -302,7 +292,7 @@ char precision_config[][3] ={{8, 0, -4}//Layer-1
 /*
 // Test Layer-1 batch=1
 // Alexnet Configuration
-unsigned layer_config[][25] = {{0,
+unsigned layer_config[][NUM_CONFIG_ITEM] = {{0,
 							227, 227, 3, 11, 11, 3, 96, 96,
 							0,
 							55, 55, 96, 4, 0, 0, 1,
@@ -322,7 +312,7 @@ char precision_config[][3] ={{8, 0, -4}//Layer-1
 /*
 // Test Layer-1 batch=1
 // VGG-16 Configuration
-unsigned layer_config[][25] = {{0,
+unsigned layer_config[][NUM_CONFIG_ITEM] = {{0,
 							224, 224, 3, 3, 3, 3, 64, 64,
 							0,
 							224, 224, 64, 1, 1, 0, 1,
@@ -342,7 +332,7 @@ char precision_config[][3] ={{7,  0, -2}//Layer-1
 
 // Test with batch=1
 // Alexnet Configuration
-unsigned layer_config[][25] = {{0,
+unsigned layer_config[][NUM_CONFIG_ITEM] = {{0,
 							227, 227, 3, 11, 11, 3, 96, 96,
 							0,
 							55, 55, 96, 4, 0, 0, 1,
@@ -424,10 +414,11 @@ unsigned input_config[5] = {227, 227, 3, 1}; //original image size(dim1, dim2, d
 unsigned output_config[3] = {1, 1, 1024};//Layer-8  Note: only one result is extracted and verified
 
 
+
 /*
 // Test with batch=1
 // VGG-16 Configuration
-unsigned layer_config[][25] = {{0,
+unsigned layer_config[][NUM_CONFIG_ITEM] = {{0,
 							224, 224, 3, 3, 3, 3, 64, 64,
 							0,
 							224, 224, 64, 1, 1, 0, 1,

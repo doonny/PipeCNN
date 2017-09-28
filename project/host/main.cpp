@@ -25,10 +25,18 @@
 #include "../device/hw_param.cl"
 #include "layer_config.h"
 
+#ifdef USE_OPENCV
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/core/core.hpp>
+using namespace cv;
+#endif
+
 using namespace std;
 using namespace ocl_util;
 
 typedef  signed char  DTYPE;
+
 
 //----------- Design Parameters --------------//
 // select what platform is used
@@ -48,18 +56,45 @@ const char *vendor_name = "Intel";
 #define OUT_BUF_SIZE   256*256*64
 #define FC_BUF_SIZE    32768*MAX_BATCH_SIZE
 
+#define MEAN_DATA_WIDTH   256
+#define MEAN_DATA_HEIGHT  256
+#define MEAN_DATA_CHANNEl 3
+const char *mean_data_file_path   = "./data/picture/mean_data.dat";
+const char *picture_file_path     = "./data/picture/cat.jpg";
+const char *synset_word_file_path = "./data/picture/synset_words.txt";
+char  synset_buf[1000][1024]={0};
+
+
 /*
 // Test FC only
 // Original problem size
 // File size is in num of DTYPE numbers
-#define IMAGE_FILE_SIZE   (4096*4096)//(227*227*3)
+#define IMAGE_FILE_SIZE   (27*27*96)
 //#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
 #define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
+#define CONV_NUM          4
+#define LAYER_NUM         7
+
+const char *weight_file_path = "./data/data_alex/weights.dat";
+const char *input_file_path = "./data/data_alex/lrn1.dat";
+const char *ref_file_path = "./data/data_alex/fc8.dat";
+const char *dump_file_path = "./result_dump.txt";
+*/
+
+
+/*
+// Test FC only
+// Original problem size
+// File size is in num of DTYPE numbers
+#define IMAGE_FILE_SIZE   (6*6*256)
+//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
+#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
+#define CONV_NUM          0
 #define LAYER_NUM         3
 
-const char *weight_file_path = "../host/data/data_alex/weights.dat";
-const char *input_file_path = "../host/data/data_alex/image.dat";
-const char *ref_file_path = "../host/data/data_alex/fc8.dat";
+const char *weight_file_path = "./data/data_alex/weights.dat";
+const char *input_file_path = "./data/data_alex/pool5.dat";
+const char *ref_file_path = "./data/data_alex/fc8.dat";
 const char *dump_file_path = "./result_dump.txt";
 */
 
@@ -72,9 +107,9 @@ const char *dump_file_path = "./result_dump.txt";
 #define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
 #define LAYER_NUM         2
 
-const char *weight_file_path = "../host/data/data_alex/weights.dat";
-const char *input_file_path = "../host/data/data_alex/image.dat";
-const char *ref_file_path = "../host/data/data_alex/pool2.dat";
+const char *weight_file_path = "./data/data_alex/weights.dat";
+const char *input_file_path = "./data/data_alex/image.dat";
+const char *ref_file_path = "./data/data_alex/pool2.dat";
 const char *dump_file_path = "./result_dump.txt";
 */
 
@@ -187,14 +222,19 @@ DTYPE *output_one_item;
 DTYPE *output_reorder;
 DTYPE *golden_ref;
 
-unsigned layer_config_original[LAYER_NUM][25];
+unsigned layer_config_original[LAYER_NUM][NUM_CONFIG_ITEM];
 
+#ifdef USE_OPENCV
+int  load_picture(DTYPE *image);
+#endif
 int  prepare();
 void dumpResult();
-void reorderWeights(DTYPE *weights, DTYPE *weight_buf, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned dim4_original, unsigned offset, unsigned padding_offset, unsigned vecSize, unsigned laneNum);
+void reorderWeights(DTYPE *weights, DTYPE *weight_buf, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned dim3_original, unsigned dim4_original, unsigned offset, unsigned padding_offset, unsigned vecSize, unsigned laneNum);
 void reorderBias(DTYPE *dataIn, DTYPE *bias, unsigned offset, unsigned padding_offset, unsigned dim4, unsigned dim4_original, unsigned laneNum);
 void reorderOutput(DTYPE *output, DTYPE *output_reorder, unsigned dim1, unsigned dim2, unsigned dim3);
 void extractOutput(DTYPE *output, DTYPE *output_one_item, unsigned item_num, unsigned batch_size, unsigned dim1, unsigned dim2, unsigned dim3);
+void softmax(DTYPE *output_reorder , DTYPE *output);
+void display(DTYPE *output);
 void cleanup();
 
 
@@ -218,10 +258,8 @@ int main(int argc, char** argv)
 	unsigned int batch_item_size;
 	unsigned int weight_buf_size;
 
-	unsigned int saturated_dim123;
-	
-	size_t knl_memRd_global_size[3];
-	size_t knl_memRd_local_size[3];
+	//size_t knl_memRd_global_size[3];
+	//size_t knl_memRd_local_size[3];
 	size_t knl_memWr_global_size[3];
 	size_t knl_memWr_local_size[3];
 	size_t knl_lrn_global_size[3];
@@ -294,8 +332,6 @@ int main(int argc, char** argv)
 	fc_1_buf.reset(num_devices);
 	fc_2_buf.reset(num_devices);
 	
-	saturated_dim123 = ceil((float)(layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][weight_n])/VEC_SIZE)*VEC_SIZE;
-
 	// Create qeues, kernels and mem objs
 	for(unsigned i = 0; i < num_devices; ++i) {
 		// Command queue
@@ -326,12 +362,8 @@ int main(int argc, char** argv)
 
 		// Mems
 		for(unsigned j = 0; j < LAYER_NUM; ++j){
-			if(j==0){ // for layer-1, the image data is folded to saturate the vectorized pipeline
-				weight_buf_size = saturated_dim123*layer_config[j][weight_m];
-			}
-			else{ // other layers dim3 is divisible by VEC_SIZE
-			    weight_buf_size = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m];
-			}
+
+		    weight_buf_size = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m];
 
 			// Weights buffers for each layer
 			weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, 
@@ -357,7 +389,7 @@ int main(int argc, char** argv)
 		for(unsigned j = 0; j < input_config[batch_size]; ++j){
 			// Input data buffers
 			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE, 
-				saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y]* sizeof(DTYPE), NULL, &status);
+				IN_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for data in layer");
 
 			// Output results buffers
@@ -367,7 +399,7 @@ int main(int argc, char** argv)
 
 			// Load image data into buffers
 			status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
-				0, (saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
+				0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
 			checkError(status, "Failed to transfer input image");
 		}
 		
@@ -403,9 +435,15 @@ int main(int argc, char** argv)
 	unsigned short out_dim1xbatch;
 	unsigned int   out_dim1x2xbatch;
 	unsigned char  padding_offset;
-	unsigned char  data_dim1, data_dim2;
-	unsigned char  weight_dim1, weight_dim2;
-	unsigned char  stride, padding;
+	unsigned char  conv_group_num_dim1, conv_group_num_dim2;
+	unsigned char  conv_win_size_dim1, conv_win_size_dim2;
+	unsigned int   conv_win_size_dim1x2x3;
+	unsigned char  conv_group_rem_dim1, conv_group_rem_dim2;
+	unsigned int   conv_group_rem_dim1x2x3;
+	unsigned short data_dim1x2;
+	unsigned char  weight_dim1x2;
+	unsigned int   weight_dim1x2x3;
+	unsigned short weight_dim4_div_LaneNum;
 	
 	// Kernel excutions main loops
 	for(unsigned i = 0; i < num_devices; ++i) {
@@ -432,45 +470,99 @@ int main(int argc, char** argv)
 			// Set knl_memRd arguments.
 			unsigned argi = 0;
 			
-			if(j == 0){ // layer-1
-			
-				data_dim1 = layer_config[j][conv_x];
-				data_dim2 = layer_config[j][conv_y];
-				weight_dim1 = 1; // dim1 is folded to dim3
-				weight_dim2 = 1; // dim2 is folded to dim3
-				stride  = 1; // stride is done in prepare()
-				padding = 0; // padding is done in prepare()
+			// Convolution tasks (conv_x,conv_y) are divided into multiple groups
+			// each group process CONV_GP_SIZE_X*CONV_GP_SIZE_Y convolutions in parallel
+			conv_group_num_dim1   = ceil((float)layer_config[j][conv_x]/CONV_GP_SIZE_X);
+			conv_group_num_dim2   = ceil((float)layer_config[j][conv_y]/CONV_GP_SIZE_Y);
+			if(layer_config[j][conv_x]==1){ // when only one group for FC layer
+				conv_win_size_dim1  = layer_config[j][weight_w];
+				conv_group_rem_dim1   = layer_config[j][weight_w];
 			}
-			else{ // other layers
-				data_dim1 = layer_config[j][data_w];
-				data_dim2 = layer_config[j][data_h];
-				weight_dim1 = layer_config[j][weight_w];
-				weight_dim2 = layer_config[j][weight_h];
-				stride  = layer_config[j][conv_stride];
-				padding = layer_config[j][conv_padding];
+			else{
+				conv_win_size_dim1  = layer_config[j][weight_w]+(CONV_GP_SIZE_X-1)*layer_config[j][conv_stride];
+				// actual number of input pixels need to be read in the last group according to the number of the remaining valid conv items in the last group
+				// the remaining valid conv items is layer_config[j][conv_x]%CONV_GP_SIZE_X
+				if(layer_config[j][conv_x]%CONV_GP_SIZE_X==0)
+					conv_group_rem_dim1   = CONV_GP_SIZE_X*layer_config[j][weight_w];
+				else
+					conv_group_rem_dim1   = layer_config[j][conv_x]%CONV_GP_SIZE_X*layer_config[j][weight_w];
 			}
+			// In this version, grouping is not performed in the column (y) direction, i.e., CONV_GP_SIZE_Y=1
+			conv_win_size_dim2    = layer_config[j][weight_h];
+			conv_group_rem_dim2   = layer_config[j][weight_h];
+			conv_win_size_dim1x2x3  = conv_win_size_dim1*conv_win_size_dim2*layer_config[j][weight_n];
+			conv_group_rem_dim1x2x3 = conv_group_rem_dim1*conv_group_rem_dim2*layer_config[j][weight_n];
 			
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &data_dim1);
+			weight_dim4_div_LaneNum = layer_config[j][weight_m]/LANE_NUM;
+			data_dim1x2 = layer_config[j][data_w]*layer_config[j][data_h];
+			weight_dim1x2 = layer_config[j][weight_w]*layer_config[j][weight_h];
+			weight_dim1x2x3 = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n];
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][data_w]);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &data_dim2);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][data_h]);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_ushort), &data_dim1x2);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &weight_dim1);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][weight_w]);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &weight_dim2);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][weight_h]);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_ushort), &layer_config[j][weight_n]);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_ushort), &weight_dim4_div_LaneNum);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &weight_dim1x2);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uint),  &weight_dim1x2x3);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_x]);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			//status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_y]);
+			//checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_stride]);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &stride);
-			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
-	
-			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &padding);
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_padding]);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 	
 			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_split]);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &conv_group_num_dim1);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &conv_group_num_dim2);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &conv_group_rem_dim1);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			//status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &conv_group_rem_dim2);
+			//checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uint), &conv_group_rem_dim1x2x3);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &conv_win_size_dim1);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uchar), &conv_win_size_dim2);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+
+			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uint), &conv_win_size_dim1x2x3);
+			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 			
 			// Select the kernel input mem object source
 			// data_buf -> conv1 -> output_buf -> lrn1 -> data_buf -> conv2 -> output_buf -> lrn2 -> data_buf
@@ -503,19 +595,11 @@ int main(int argc, char** argv)
 	
 			//  Set knl_conv arguments.
 			argi = 0;
-
-		
-			if(j==0){ // layer-1
-				conv_loop_cnt = saturated_dim123/VEC_SIZE;
-			}
-			else{ // other layers
-				conv_loop_cnt = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]/VEC_SIZE;
-				if((layer_config[j][weight_n]%VEC_SIZE)!=0)
-					printf("\nError: incorrect setting of parameter VEC_SIZE !!!\n");
-			}
+			
+			conv_loop_cnt = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]/VEC_SIZE;
 			conv_output_num = layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][weight_m]/LANE_NUM; // new weight_m is divisible by LANE_NUM
 			conv_control = (layer_config[j][conv_relu]&0x01)|(((~layer_config[j][pool_on])&0x01)<<1);				
-			
+
 			status = clSetKernelArg(knl_conv[i], argi++, sizeof(cl_uint), &conv_output_num);
 			checkError(status, "Failed to set argument %d of kernel conv", argi - 1);
 	
@@ -674,43 +758,19 @@ int main(int argc, char** argv)
 				printf("\nExecuting Layer %d:\n", j+1);
 	
 			// kernel memRd
-			if((layer_config[j][weight_m]%LANE_NUM)!=0)
-				printf("\nError: incorrect setting of parameter LAN_NUM or incorrect padding in weight_m !!!\n");
-			if(j == 0){ // Layer-1
-				
-				knl_memRd_global_size[0] = layer_config[j][conv_x];
-				knl_memRd_global_size[1] = layer_config[j][conv_y];
-				knl_memRd_global_size[2] = layer_config[j][weight_m]/LANE_NUM*saturated_dim123/VEC_SIZE; // new conv_z=weight_m is divisible by LANE_NUM
-
-				knl_memRd_local_size[0] = 1;
-				knl_memRd_local_size[1] = 1;
-				knl_memRd_local_size[2] = saturated_dim123/VEC_SIZE;
-			}
-			else{ // other layers
-				
-				knl_memRd_global_size[0] = layer_config[j][conv_x]*layer_config[j][weight_w];
-				knl_memRd_global_size[1] = layer_config[j][conv_y]*layer_config[j][weight_h];
-				knl_memRd_global_size[2] = layer_config[j][weight_m]/LANE_NUM*layer_config[j][weight_n]/VEC_SIZE; // new conv_z=weight_m is divisible by LANE_NUM
-
-				knl_memRd_local_size[0] = layer_config[j][weight_w];
-				knl_memRd_local_size[1] = layer_config[j][weight_h];
-				knl_memRd_local_size[2] = layer_config[j][weight_n]/VEC_SIZE;
-			}
-
-			status = clEnqueueNDRangeKernel(que_memRd[i], knl_memRd[i], 3, NULL, 
-									knl_memRd_global_size, knl_memRd_local_size, 0, NULL, &memRd_event[i]);
-			checkError(status, "Failed to launch memRd kernel");
 			
 			if(k == 0)
-				printf("\nLaunching kernel MemRd with local size: %d, %d, %d  (global size: %d, %d, %d)\n", 
-									(int)knl_memRd_local_size[0], (int)knl_memRd_local_size[1], (int)knl_memRd_local_size[2], 
-									(int)knl_memRd_global_size[0], (int)knl_memRd_global_size[1], (int)knl_memRd_global_size[2]);
-	
+				printf("\nLaunching single work-item kernel winbuffer\n");
+			
+			status = clEnqueueTask(que_memRd[i], knl_memRd[i], 0, NULL, &memRd_event[i]);
+			checkError(status, "Failed to launch kernel memRD kernel");
+
 			// kernel conv
-			status = clEnqueueTask(que_conv[i], knl_conv[i], 0, NULL, &conv_event[i]);
-			checkError(status, "Failed to launch kernel conv kernel");
 			if(k == 0)
 				printf("\nLaunching single work-item kernel Conv\n");
+			
+			status = clEnqueueTask(que_conv[i], knl_conv[i], 0, NULL, &conv_event[i]);
+			checkError(status, "Failed to launch kernel conv kernel");
 
 			// kernel pool
 			if(layer_config[j][pool_on]){
@@ -727,17 +787,18 @@ int main(int argc, char** argv)
 			knl_memWr_local_size[0] = 1;
 			knl_memWr_local_size[1] = 1;
 			knl_memWr_local_size[2] = LANE_NUM;
-
-			status = clEnqueueNDRangeKernel(que_memWr[i], knl_memWr[i], 3, NULL, 
-									knl_memWr_global_size, knl_memWr_local_size, 0, NULL, &memWr_event[i]);
-			checkError(status, "Failed to launch kernel memWr");
 			
 			if(k == 0)
 				printf("\nLaunching kernel MemWr with local size: %d, %d, %d  (global size: %d, %d, %d)\n", 
 									(int)knl_memWr_local_size[0], (int)knl_memWr_local_size[1], (int)knl_memWr_local_size[2], 
 									(int)knl_memWr_global_size[0], (int)knl_memWr_global_size[1], (int)knl_memWr_global_size[2]);
+
+			status = clEnqueueNDRangeKernel(que_memWr[i], knl_memWr[i], 3, NULL, 
+									knl_memWr_global_size, knl_memWr_local_size, 0, NULL, &memWr_event[i]);
+			checkError(status, "Failed to launch kernel memWr");
 			
 			
+			// kernel lrn
 			if(layer_config[j][lrn_on]){
 				
 				knl_lrn_global_size[0] = layer_config[j][pool_x];
@@ -747,14 +808,13 @@ int main(int argc, char** argv)
 				knl_lrn_local_size[1] = 1;
 				knl_lrn_local_size[2] = layer_config[j][pool_z]/VEC_SIZE;
 				
-				// kernel lrn
-				status = clEnqueueNDRangeKernel(que_memWr[i], knl_lrn[i], 3, NULL, 
-										knl_lrn_global_size, knl_lrn_local_size, 0, NULL, &lrn_event[i]);
-				checkError(status, "Failed to launch kernel lrn");
-				
 				if(k == 0)
 					printf("\nLaunching kernel lrn with local size: %d, %d, %d  (global size: %d, %d, %d)\n", 
 										(int)knl_lrn_local_size[0], (int)knl_lrn_local_size[1], (int)knl_lrn_local_size[2], (int)knl_lrn_global_size[0], (int)knl_lrn_global_size[1], (int)knl_lrn_global_size[2]);
+				
+				status = clEnqueueNDRangeKernel(que_memWr[i], knl_lrn[i], 3, NULL, 
+										knl_lrn_global_size, knl_lrn_local_size, 0, NULL, &lrn_event[i]);
+				checkError(status, "Failed to launch kernel lrn");
 			}
 			
 			// Wait for all kernel to finish
@@ -882,6 +942,10 @@ int main(int argc, char** argv)
 	// Reorder one item of the batch results into scalar format
 	reorderOutput(output_one_item, output_reorder, output_config[output_w], output_config[output_h], output_config[output_n]);
 
+	#ifdef USE_OPENCV
+	softmax(output_reorder, output_one_item);
+	display(output_one_item);
+	#else
 	// Compare each results with the golden reference data
 	batch_item_size = output_config[output_w]*output_config[output_h]*output_config[output_n];
 	err_num = 0;
@@ -895,17 +959,68 @@ int main(int argc, char** argv)
 	}
 	if(err_num>0)
 		printf("Totally %d Wrong Results\n", err_num);
-	else
-		printf("Check Pass\n");
-
+	else{
+		printf("\nCheck Pass !!!\n");
+		softmax(output_reorder, output_one_item);
+		display(output_one_item);
+	}
 	// Dump results and golden_ref for debugging
 	dumpResult();
-
+	#endif
+	
 	// Release resource
 	cleanup();
 
 	return EXIT_SUCCESS;
 }
+
+#ifdef USE_OPENCV
+// Load image from files
+int load_picture(DTYPE *image){
+	
+		float *mean_data;
+
+		printf("\nLoading picture %s .....\n\n", picture_file_path);
+		
+		// load ILSVRC2012 database mean data
+		mean_data = (float *) malloc(sizeof(float)*MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT*MEAN_DATA_CHANNEl);
+		if(mean_data == NULL){
+			printf("Error: allocating memory for images failed !!!\n");
+			return 1;
+		}
+		
+		FILE *p_mean_data=fopen(mean_data_file_path,"rb");
+		fread(mean_data,sizeof(float),MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT*MEAN_DATA_CHANNEl,p_mean_data); 
+		
+		// load picture from files
+		Mat img = imread(picture_file_path); 
+		// resize pic to MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT, and substract with mean data
+		Mat img1;
+		resize(img,img1,Size(MEAN_DATA_WIDTH,MEAN_DATA_HEIGHT));
+		img1.convertTo(img1,CV_32FC3);
+		Mat mean_mat(MEAN_DATA_WIDTH, MEAN_DATA_HEIGHT, CV_32FC3, mean_data);
+		img1 = img1 - mean_mat;
+		// resize to the input size of the first layer
+		Mat img2;
+		resize(img1,img2,Size(layer_config_original[0][data_w],layer_config_original[0][data_h]));
+		// convert to 8-bit fixed-point
+		img2.convertTo(img2,CV_8SC3);
+		// reorder channel sequence from RGB to GBR
+		DTYPE * data_ptr = (DTYPE*)img2.data;
+		unsigned int w,h,c;
+		unsigned int k=0;
+		for(h=0;h<layer_config_original[0][data_h];h++){
+			for(w=0;w<layer_config_original[0][data_w];w++){
+				for (c=0;c<layer_config_original[0][data_n];c++){
+					 image[c*layer_config_original[0][data_w]*layer_config_original[0][data_h]+h*layer_config_original[0][data_w]+w]=data_ptr[k];	
+					 k++;
+				}
+			}
+		}
+		fclose(p_mean_data);
+		return 0;
+}
+#endif
 
 // Read all input data and golden ref data
 int prepare()
@@ -919,57 +1034,118 @@ int prepare()
 	unsigned godref_size;
 	int ptr=0;  // original weight and bias offset for each layer  
 	
-	unsigned saturated_dim123;
-	DTYPE    *data_extract;
+	unsigned char  conv_win_size_dim1, conv_win_size_dim2;
+	
 	unsigned padding_offset[LAYER_NUM];
 	
-	// copy the original layer configurations
-	// perform padding when the num of feature maps is not divisible by LANE_NUM
+	// Parameter initialization and safty check
 	for(unsigned ll=0; ll<LAYER_NUM; ll++){
-		for(unsigned ii=0; ii<25; ii++){
+		
+		// First, backup the original layer configurations
+		for(unsigned ii=0; ii<NUM_CONFIG_ITEM; ii++){
 			layer_config_original[ll][ii]=layer_config[ll][ii];
-			// check parameters
-
 		}
+		
+		// Second, perform padding on dim4, when it is not divisible by LANE_NUM
 		if(layer_config[ll][weight_m]%LANE_NUM != 0){
-			printf("\nInit: layer-%d requires padding zero-value feature maps for give param LANE_NUM=%d\n", ll+1, LANE_NUM);
+			printf("\nWarnning: layer-%d requires padding zero-value feature maps for give param LANE_NUM=%d\n", ll+1, LANE_NUM);
 			// change the num of output featuremaps to new value that is divisible by LANE_NUM
 			// Note: the num of input feature maps of next layer remains the same
 			layer_config[ll][weight_m] = ceil((float)layer_config[ll][weight_m]/LANE_NUM)*LANE_NUM;
 			layer_config[ll][bias_size] = layer_config[ll][weight_m];
 			printf("      original num of feature maps is %d, new value is %d\n", layer_config_original[ll][weight_m], layer_config[ll][weight_m]);
+			
+			// padding of weight on dim4 is needed
+			padding_offset[ll] = layer_config[ll][weight_m] - layer_config_original[ll][weight_m];
+			// check if evenly padding on two sides is possible
+			if(((layer_config[ll][weight_m]/LANE_NUM)%2!=0) & (layer_config[ll][conv_split]==1)){
+				printf("Error: could not perform padding for split mode, weight_m/LANE_NUM must be divisible by 2 !!!\n\n");
+				return 1;
+			}
+			else{ // padding zeros evenly on two sides of dim4
+				padding_offset[ll] = padding_offset[ll]/2;
+				printf("      padding_offset=%d (layer=%d)\n\n", padding_offset[ll], ll+1);
+			}
 
-			//// check if evenly padding on two sides is possible
-			//padding_offset[ll] = layer_config[ll][weight_m] - layer_config_original[ll][weight_m];
-			//if(((layer_config[ll][weight_m]/LANE_NUM)%2!=0) & (layer_config[ll][conv_split]==1)){
-			//	printf("Error: could not perform padding for split mode, weight_m/LANE_NUM must be divisible by 2 !!!\n\n");
-			//	return 1;
-			//}
-			//else{
-			//	padding_offset[ll] = padding_offset[ll]/2;
-			//	printf("      padding_offset=%d (layer=%d)\n\n", padding_offset[ll], ll+1);
-			//}
 		}
 		else{
-			//padding_offset[ll] = 0;
+			padding_offset[ll] = 0;
 		}
-	}
+		
+		// Check parameters
+		if(ll==0){ // check parameters for layer-1
+			if(input_config[image_w] != layer_config_original[ll][data_w] ||  input_config[image_h] != layer_config_original[ll][data_h] 
+				|| input_config[image_n] != layer_config_original[ll][data_n] || input_config[image_n] != layer_config_original[ll][weight_n]){
+					printf("Error: incorrect layer configuration for layer-%d !!!\n", ll+1);
+					//return 1;
+				}
 
-	
-	// for first layer, saturate dim1*dim2*dim3 to the size of multiples of VEC_SIZE
-	saturated_dim123 = ceil((float)(layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][weight_n])/VEC_SIZE)*VEC_SIZE;
+			if((layer_config_original[ll][weight_n]!=input_config[image_n])){
+				printf("\nError: incorrect layer configuration for layer-%d !!!\n", ll+1);
+				//return 1;
+			}
+
+		}
+		else{ // other layers
+
+			// Currently weight_n must be divisible by VEC_SIZE (for first layer, padding is performed when weight_n is not divisible by VEC_SIZE)
+			if((layer_config[ll][weight_n]%VEC_SIZE)!=0){
+				printf("\nError: incorrect setting of parameter VEC_SIZE !!!\n");
+				return 1;
+			}
+			if((layer_config_original[ll][data_n]!=layer_config_original[ll-1][conv_z])){
+				printf("\nError: incorrect setting of convolution input/output size for layer-%d!!!\n", ll+1);
+				return 1;
+			} 
+		}
+		if((layer_config_original[ll][conv_x]!=(layer_config_original[ll][data_w]-layer_config_original[ll][weight_w]+2*layer_config_original[ll][conv_padding])/layer_config_original[ll][conv_stride]+1) 
+			|| (layer_config_original[ll][conv_y]!=(layer_config_original[ll][data_h]-layer_config_original[ll][weight_h]+2*layer_config_original[ll][conv_padding])/layer_config_original[ll][conv_stride]+1)
+		    || (layer_config_original[ll][conv_z]!=layer_config_original[ll][weight_m])){
+			printf("\nError: incorrect setting of convolution output size or filter params for layer-%d!!!\n", ll+1);
+			return 1;
+		}
+		if(layer_config_original[ll][pool_on] && ((layer_config_original[ll][pool_x]!=(layer_config_original[ll][conv_x]-layer_config_original[ll][pool_size])/layer_config_original[ll][pool_stride]+1) 
+			|| (layer_config_original[ll][pool_y]!=(layer_config_original[ll][conv_y]-layer_config_original[ll][pool_size])/layer_config_original[ll][pool_stride]+1)
+		    || (layer_config_original[ll][pool_z]!=layer_config_original[ll][conv_z]))){
+			printf("\nError: incorrect setting of pooling input/output size for layer-%d!!!\n", ll+1);
+			return 1;
+		}
+
+		// TODO: check buffer size, hw params
+		if(layer_config[ll][conv_x]==1){ // when only one group for FC layer
+			conv_win_size_dim1  = layer_config[ll][weight_w];
+		}
+		else{
+			conv_win_size_dim1  = layer_config[ll][weight_w]+(CONV_GP_SIZE_X-1)*layer_config[ll][conv_stride];
+		}
+		conv_win_size_dim2    = layer_config[ll][weight_h];
+		// check win_buffer size
+		if(conv_win_size_dim1*conv_win_size_dim2*layer_config[ll][weight_n]/VEC_SIZE > WIN_BUF_SIZE){
+			
+			printf("Error: required win_buffer size is %d, configured size is %d \n", conv_win_size_dim1*conv_win_size_dim2*layer_config[ll][weight_n]/VEC_SIZE, WIN_BUF_SIZE);
+			return 1;
+		}
+		// check weight_buffer size
+		if(layer_config[ll][weight_w]*layer_config[ll][weight_h]*layer_config[ll][weight_n]/VEC_SIZE > WEIGHT_BUF_SIZE){
+			
+			printf("Error: required weight_buffer size is %d, configured size is %d \n", layer_config[ll][weight_w]*layer_config[ll][weight_h]*layer_config[ll][weight_n]/VEC_SIZE, WEIGHT_BUF_SIZE);
+			return 1;
+		}
+		
+	}
 
 	// image and weight files
 	weights      = (DTYPE *)alignedMalloc(sizeof(DTYPE)*WEIGHTS_FILE_SIZE, DMA_ALIGNMENT);
 	image        = (DTYPE *)alignedMalloc(sizeof(DTYPE)*IMAGE_FILE_SIZE, DMA_ALIGNMENT);
 	
-	// input data
-	data_init   = (DTYPE *)alignedMalloc(sizeof(DTYPE)*saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y], DMA_ALIGNMENT);
-	memset(data_init, 0, sizeof(DTYPE)*saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y]);// fill non-RGB dims with 0
+	// input data buffers
+	// padding the input RGB image with extra number of zeros channels, so that data_n/weight_n is divisible by VEC_SIZE
+	layer_config[0][weight_n] = ceil((float)layer_config[0][weight_n]/VEC_SIZE)*VEC_SIZE;
+	layer_config[0][data_n] = layer_config[0][weight_n];
 
-	data_extract   = (DTYPE *)alignedMalloc(sizeof(DTYPE)*saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y], DMA_ALIGNMENT);
-	memset(data_extract, 0, sizeof(DTYPE)*saturated_dim123*layer_config[0][conv_x]*layer_config[0][conv_y]);// fill non-RGB dims with 0
-	
+	data_init   = (DTYPE *)alignedMalloc(sizeof(DTYPE)*layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n], DMA_ALIGNMENT);
+	memset(data_init, 0, sizeof(DTYPE)*layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]);// fill non-RGB dims with 0
+
 	// final results
 	if(LAYER_NUM>=CONV_NUM)// For last conv and all fc layers, all batch results are read back
 		output_size = output_config[output_w]*output_config[output_h]*output_config[output_n]*input_config[batch_size];
@@ -983,13 +1159,12 @@ int prepare()
 	golden_ref      = (DTYPE *)alignedMalloc(sizeof(DTYPE)*godref_size, DMA_ALIGNMENT);
     output_reorder  = (DTYPE *)alignedMalloc(sizeof(DTYPE)*godref_size, DMA_ALIGNMENT); // reordered results for verifying
 
-	if(weights == NULL || image == NULL || golden_ref == NULL || data_init == NULL || data_extract == NULL || output == NULL || output_one_item == NULL || output_reorder == NULL)
+	if(weights == NULL || image == NULL || golden_ref == NULL || data_init == NULL || output == NULL || output_one_item == NULL || output_reorder == NULL)
 	{
 		printf("Not enough memory !!!");
 		alignedFree(weights);
 		alignedFree(image);
 		alignedFree(data_init);
-		alignedFree(data_extract);
 		alignedFree(golden_ref);
 		alignedFree(output_one_item);
 		alignedFree(output);
@@ -998,16 +1173,10 @@ int prepare()
 		return 1;
 	}
 
-	// weights and bias	
+	// weights and bias	buffers
 	for(int j=0; j<LAYER_NUM; j++){
-		
-		if(j==0){ // layer-1
-			weight_size = saturated_dim123*layer_config[j][weight_m];
-		}
-		else{ // other layers
-			weight_size = (layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m]);
-		}
-		
+
+		weight_size = (layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m]);
 		weight_conv[j] = (DTYPE *)alignedMalloc(sizeof(DTYPE)*weight_size, DMA_ALIGNMENT);
 		bias_conv[j]   = (DTYPE *)alignedMalloc(sizeof(DTYPE)*layer_config[j][bias_size], DMA_ALIGNMENT);
 		
@@ -1045,7 +1214,13 @@ int prepare()
     	printf("Weights file does not exits !!!\n");
 
     // Image
-    bin_file_r.open(input_file_path, ios::in | ios::binary);
+	#ifdef USE_OPENCV
+	// load image from picture files 
+	if(load_picture(image)==1)
+		printf("Error: loading image data from real pictures failed !!!\n");
+	#else
+	// load image from binary files	
+	bin_file_r.open(input_file_path, ios::in | ios::binary);
 
     if(bin_file_r.is_open())
     {
@@ -1062,7 +1237,18 @@ int prepare()
     }
     else
     	printf("Image file does not exits !!!\n");
-
+	#endif
+	
+	// Synset_words
+     int nn=0;
+	 FILE *fp=fopen(synset_word_file_path,"r");
+	 while (!feof(fp)){
+        fgets(synset_buf[nn], 1024, fp);
+        nn++;
+    }
+    fclose(fp);
+	 
+	 
     // golden_output
 	bin_file_r.open(ref_file_path, ios::in | ios::binary);
 
@@ -1081,196 +1267,84 @@ int prepare()
     }
     else
     	printf("Golden file does not exits !!!\n");
-
-	
-	// Fold the input image and weight to saturate the vectorized pipeline
-	if((layer_config[0][weight_n]!=input_config[image_n]) ||(layer_config[0][weight_n]>=VEC_SIZE))
-		printf("\nError: incorrect layer configuration for layer-1 !!!\n");
-	
-	// Copy the image data into the input data buffer
-	// first, extract the image data for each conv operations and fill them into input buffer
-	int w_start, w_end;
-	int h_start, h_end;
-	for(unsigned q = 0; q<layer_config[0][conv_x]; q++){
-		for(unsigned p = 0; p<layer_config[0][conv_y]; p++){
-						
-			w_start = q*layer_config[0][conv_stride]-layer_config[0][conv_padding];
-			w_end   = w_start+layer_config[0][weight_w]-1;
-			h_start = p*layer_config[0][conv_stride]-layer_config[0][conv_padding];
-			h_end   = h_start+layer_config[0][weight_h]-1;
 			
-			//printf("w_start=%d w_end=%d h_start=%d h_end=%d\n", w_start, w_end, h_start, h_end);
-			
-			for(unsigned nn = 0; nn<input_config[image_n]; nn++){
-						for(int ww = w_start; ww<=w_end; ww++){
-							for(int hh = h_start; hh<=h_end; hh++){
-								
-								if(ww<0 || ww>=(signed)input_config[image_w] || hh<0 || hh>=(signed)input_config[image_h])
-									data_extract[nn*layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][conv_x]*layer_config[0][conv_y]+ (hh-h_start)*layer_config[0][weight_w]*layer_config[0][conv_x]*layer_config[0][conv_y] + (ww-w_start)*layer_config[0][conv_x]*layer_config[0][conv_y] + p*layer_config[0][conv_x] + q]
-										= 0; // padding value
-								else
-									data_extract[nn*layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][conv_x]*layer_config[0][conv_y]+ (hh-h_start)*layer_config[0][weight_w]*layer_config[0][conv_x]*layer_config[0][conv_y] + (ww-w_start)*layer_config[0][conv_x]*layer_config[0][conv_y] + p*layer_config[0][conv_x] + q]
-										= (DTYPE) image[nn*input_config[image_w]*input_config[image_h] + hh*input_config[image_w] + ww];
-								
-							}
-						}
-			}
-		}
-	}
-	// second, vectorize the data by a factor of VECS_SIZE
-	for(unsigned q = 0; q<layer_config[0][conv_x]; q++){
-		for(unsigned p = 0; p<layer_config[0][conv_y]; p++){
-			for(unsigned nn = 0; nn<saturated_dim123/VEC_SIZE; nn++){
-				for(unsigned vv = 0; vv<VEC_SIZE; vv++){
-
-					data_init[ nn*VEC_SIZE*layer_config[0][conv_x]*layer_config[0][conv_y] + p*layer_config[0][conv_x]*VEC_SIZE + q*VEC_SIZE + vv] 
-						= data_extract[(nn*VEC_SIZE+vv)*layer_config[0][conv_x]*layer_config[0][conv_y] + p*layer_config[0][conv_x]+ q];
-
+	// Vectorize the input image by a factor of VEC_SIZE
+	for(unsigned n = 0; n<layer_config[0][data_n]/VEC_SIZE; n++){
+		for(unsigned i = 0; i<layer_config[0][data_h]; i++){
+			for(unsigned j = 0; j<layer_config[0][data_w]; j++){
+				for(unsigned k = 0; k<VEC_SIZE; k++){
+					if((n*VEC_SIZE+k)<layer_config_original[0][data_n]){ //  when layer_config[0][data_n] > layer_config_original[0][data_n], only copy valid pixels
+						data_init[n*VEC_SIZE*layer_config[0][data_h]*layer_config[0][data_w] + i*layer_config[0][data_w]*VEC_SIZE + j*VEC_SIZE + k]
+							= (DTYPE) image[(n*VEC_SIZE+k)*layer_config[0][data_h]*layer_config[0][data_w] + i*layer_config[0][data_w] + j];
+					}
 				}
 			}
 		}
 	}
 
-	// calculate the padding value for each layer
-	for(unsigned ll=0; ll<LAYER_NUM; ll++){
-
-		if(layer_config_original[ll][weight_m]%LANE_NUM != 0){
-			printf("\nInit: layer-%d requires padding zero-value feature maps for give param LANE_NUM=%d\n", ll+1, LANE_NUM);
-			
-			// check if evenly padding on two sides is possible
-			padding_offset[ll] = layer_config[ll][weight_m] - layer_config_original[ll][weight_m];
-			if(((layer_config[ll][weight_m]/LANE_NUM)%2!=0) & (layer_config[ll][conv_split]==1)){
-				printf("Error: could not perform padding for split mode, weight_m/LANE_NUM must be divisible by 2 !!!\n\n");
-				return 1;
-			}
-			else{
-				padding_offset[ll] = padding_offset[ll]/2;
-				printf("      padding_offset=%d (layer=%d)\n\n", padding_offset[ll], ll+1);
-			}
-		}
-		else{
-			padding_offset[ll] = 0;
-		}
-	}
-
 	// Layer-1
-	reorderWeights(weights, weight_conv[0], layer_config[0][weight_w], layer_config[0][weight_h], layer_config[0][weight_n], layer_config[0][weight_m], layer_config_original[0][weight_m], ptr, padding_offset[0], VEC_SIZE, LANE_NUM);
-	ptr+=layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config[0][weight_n]*layer_config_original[0][weight_m];
+	reorderWeights(weights, weight_conv[0], layer_config[0][weight_w], layer_config[0][weight_h], layer_config[0][weight_n], layer_config[0][weight_m], layer_config_original[0][weight_n], layer_config_original[0][weight_m], ptr, padding_offset[0], VEC_SIZE, LANE_NUM);
+	ptr+=layer_config[0][weight_w]*layer_config[0][weight_h]*layer_config_original[0][weight_n]*layer_config_original[0][weight_m];
 	reorderBias(weights, bias_conv[0], ptr, padding_offset[0], layer_config[0][bias_size], layer_config_original[0][bias_size], LANE_NUM);
 	ptr+=layer_config_original[0][bias_size];
 	
 	// Other layers
 	for(unsigned j=1; j<LAYER_NUM; j++){
 		
-		if(ptr+layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config_original[j][weight_m]>WEIGHTS_FILE_SIZE)
+		if(ptr+layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config_original[j][weight_n]*layer_config_original[j][weight_m]>WEIGHTS_FILE_SIZE)
 		{
 			printf("Error：exceed weight file size !!!\n");
 			return 1;
 		}
-		reorderWeights(weights, weight_conv[j], layer_config[j][weight_w], layer_config[j][weight_h], layer_config[j][weight_n], layer_config[j][weight_m], layer_config_original[j][weight_m], ptr, padding_offset[j], VEC_SIZE, LANE_NUM);
-		ptr+=layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config_original[j][weight_m];
+		
+		reorderWeights(weights, weight_conv[j], layer_config[j][weight_w], layer_config[j][weight_h], layer_config[j][weight_n], layer_config[j][weight_m], layer_config_original[j][weight_n], layer_config_original[j][weight_m], ptr, padding_offset[j], VEC_SIZE, LANE_NUM);
+		ptr+=layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config_original[j][weight_n]*layer_config_original[j][weight_m];
 		reorderBias(weights, bias_conv[j], ptr, padding_offset[j], layer_config[j][bias_size], layer_config_original[j][bias_size], LANE_NUM);
 		ptr+=layer_config_original[j][bias_size];
 	}
-
-	// release resource
-	alignedFree(data_extract);
 	
 	return 0;
 }
 
 
-void reorderWeights(DTYPE *weights, DTYPE *weight_buf, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned dim4_original, unsigned offset, unsigned padding_offset, unsigned vecSize, unsigned laneNum){
+void reorderWeights(DTYPE *weights, DTYPE *weight_buf, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned dim3_original, unsigned dim4_original, unsigned offset, unsigned padding_offset, unsigned vecSize, unsigned laneNum){
 
-	unsigned k_bound, n_bound;
-	unsigned saturated_dim123;
-	unsigned weight_size;
-	DTYPE    *weight_tmp;
 	DTYPE    *copy_with_padding;
-	
-	// first, copy the data into new buffer with zero paddings
+
+	// First, copy the data into new buffer and padding in dim3/dim4 with zeros if needed
 	copy_with_padding  = (DTYPE *)malloc(sizeof(DTYPE)*dim1*dim2*dim3*dim4);
 	if(copy_with_padding == NULL)
 	{
-		printf("Not enough memory when reordering weight!!!");
+		printf("Error: not enough memory when padding weight!!!");
 		free(copy_with_padding);
 	}
 	memset(copy_with_padding, 0, sizeof(DTYPE)*dim1*dim2*dim3*dim4);
-	// padding evenly on two sides of weight_m
-	memcpy(copy_with_padding+(padding_offset*dim1*dim2*dim3), weights+offset, sizeof(DTYPE)*dim1*dim2*dim3*dim4_original);
 	
-	// second, perform vectorization
-	if((dim4/laneNum)*laneNum!=dim4) // dim4 must be divisible by laneNum
-		printf("\nWarrning: Incorrect feature map dim4=%d when reorderring weight !!!\n", dim4);
+	for(unsigned m = 0; m<dim4_original; m++){
+		for(unsigned n = 0; n<dim3_original; n++){
+			for(unsigned i = 0; i<dim2; i++){
+				for(unsigned j = 0; j<dim1; j++){
+							copy_with_padding[(padding_offset*dim1*dim2*dim3) + m*dim1*dim2*dim3 + n*dim1*dim2 + i*dim1 + j] 
+													= (DTYPE) weights[offset+m*dim1*dim2*dim3_original + n*dim1*dim2 + i*dim1 + j];
+				}
+			}
+		}
+	}
 
-	if(dim3>=vecSize){ // for other Layer
-		k_bound = vecSize;
-		n_bound = dim3/vecSize;
-
-		if((dim3!=n_bound*vecSize)) // dim3 must be divisible by vecSize
-			printf("\nWarrning: Incorrect feature map dim3=%d when reorderring weight !!!\n", dim3);
-		
-		for(unsigned m = 0; m<(dim4/laneNum); m++){
-			for(unsigned n = 0; n<n_bound; n++){
-				for(unsigned i = 0; i<dim2; i++){
-					for(unsigned j = 0; j<dim1; j++){
-						for(unsigned ll = 0; ll<laneNum; ll++){
-							for(unsigned k = 0; k<k_bound; k++){
-								//weights[m*dim1*dim2*dim3_dest*laneNum + i*dim1*vecSize*laneNum + j*vecSize*laneNum + ll*vecSize + k] 
-								//						= (DTYPE) dataIn[offset + (m*laneNum+ll)*k_bound*dim2*dim1 + (n*vecSize+k)*dim1*dim2 + i*dim1 + j];
-								weight_buf[m*dim1*dim2*dim3*laneNum + n*dim1*dim2*vecSize*laneNum + i*dim1*vecSize*laneNum + j*vecSize*laneNum + ll*vecSize + k] 
-														= (DTYPE) copy_with_padding[(m*laneNum+ll)*dim3*dim2*dim1 + (n*vecSize+k)*dim1*dim2 + i*dim1 + j];
-							}
+	// Second, perform vectorization in dim3 by VEC_SIZE and at the same time, perform vectorization in dim4 by a factor of LANE_NUM
+	for(unsigned m = 0; m<(dim4/laneNum); m++){
+		for(unsigned n = 0; n<(dim3/vecSize); n++){
+			for(unsigned i = 0; i<dim2; i++){
+				for(unsigned j = 0; j<dim1; j++){
+					for(unsigned ll = 0; ll<laneNum; ll++){
+						for(unsigned k = 0; k<vecSize; k++){
+							weight_buf[m*dim1*dim2*dim3*laneNum + n*dim1*dim2*vecSize*laneNum + i*dim1*vecSize*laneNum + j*vecSize*laneNum + ll*vecSize + k] 
+													= (DTYPE) copy_with_padding[(m*laneNum+ll)*dim3*dim2*dim1 + (n*vecSize+k)*dim1*dim2 + i*dim1 + j];
 						}
 					}
 				}
 			}
 		}
-	}
-	else{ // for Layer 1 (dim3<vecSize)
-
-		saturated_dim123 = ceil((float)(dim1*dim2*dim3)/VEC_SIZE)*VEC_SIZE;
-		weight_size = saturated_dim123*dim4;
-
-		weight_tmp = (DTYPE *)malloc(sizeof(DTYPE)*weight_size);
-		if(weight_tmp == NULL)
-		{
-			printf("Not enough memory when reordering weight!!!");
-			free(weight_tmp);
-		}
-		memset(weight_tmp, 0, sizeof(DTYPE)*weight_size);// reset with zero
-		
-		if(weight_tmp == NULL)
-		{
-			printf("Run out of memory when preparig weights !!!\n");
-			free(weight_tmp);
-		}
-		
-		// first copy the weight into a 1-D buffer with saturated size in dim1*dim2*dim3
-		for(unsigned m = 0; m<dim4; m++){
-			for(unsigned n = 0; n<dim3; n++){
-				for(unsigned i = 0; i<dim2; i++){
-					for(unsigned j = 0; j<dim1; j++){
-								weight_tmp[m*saturated_dim123 + n*dim1*dim2 + i*dim1 + j] 
-														= (DTYPE) copy_with_padding[m*dim1*dim2*dim3 + n*dim1*dim2 + i*dim1 + j];
-					}
-				}
-			}
-		}
-		// second vectorize the weight by a factor of VEC_SIZE and LANE_NUM
-		for(unsigned m = 0; m<dim4/laneNum; m++){
-			for(unsigned n = 0; n<saturated_dim123/vecSize; n++){
-				for(unsigned ll = 0; ll<laneNum; ll++){
-					for(unsigned vv = 0; vv<vecSize; vv++){
-								weight_buf[m*laneNum*saturated_dim123 + n*vecSize*laneNum + ll*vecSize + vv]
-														= (DTYPE) weight_tmp[(m*laneNum + ll)*saturated_dim123 + (n*vecSize + vv)];
-					}
-				}
-			}
-		}
-
-		// release resource
-		free(weight_tmp);
 	}
 
 	// release resource
@@ -1351,6 +1425,52 @@ void reorderOutput(DTYPE *output, DTYPE *output_reorder, unsigned dim1, unsigned
 			}
 		}
 	}
+}
+
+void softmax(DTYPE *output_reorder , DTYPE *output)
+{
+    unsigned int i;
+	float data_max=0.0;
+	float data_exp;
+	float sum_exp=0.0;
+	for(i=0;i<output_config[output_n];i++)
+	{
+	  if(data_max<output_reorder[i])
+	    data_max=output_reorder[i];
+	}
+    for(i=0;i<output_config[output_n];i++)
+	{
+	   data_exp=exp((float)output_reorder[i]-data_max);
+	   sum_exp += data_exp;
+	 }
+    for(i=0;i<output_config[output_n];i++)
+	{
+	   data_exp=exp((float)output_reorder[i]-data_max);
+	   output[i]=data_exp / sum_exp*100.0;
+
+	 }
+}
+
+void display(DTYPE *output)
+{
+    int m=0;
+    float max=output[0];
+
+	// find the class with the highest score
+    for(unsigned int i=0;i<output_config[output_n];i++){
+        if(max<output[i]){
+			max=output[i];
+            m=i;
+		}
+    }
+    
+	// replace the last two ASCII charactor with space
+	int ii=strlen(synset_buf[m]);
+    synset_buf[m][ii-2]= 32;
+    synset_buf[m][ii-1]= 32;
+
+	printf("\nThe inference result is %s (the prob is %5.2f) \n\n", synset_buf[m], max);
+
 }
 
 void dumpResult(){
