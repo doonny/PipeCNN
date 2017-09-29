@@ -30,6 +30,7 @@ This following table lists the performance and cost information on some of the b
 | :--------: |--------------:| ----------:| ------------:|----------:|
 | DE1-soc    |         150ms |          1 |            68|     122MHz|
 | DE5-net    |          15ms |         16 |           228|     206MHz|
+
 *Note: AlexNet was used as the benchmark. Image size is 227x227x3.
 
 
