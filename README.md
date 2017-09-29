@@ -16,8 +16,7 @@ For users who are using Xilinx's SDx environments, it is recommended to use the 
 For more detailed user instructions, please refer to the [User Instructions](https://github.com/doonny/PipeCNN/tree/master/documents).
 
 ## Boards and Performances
-Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) and [SDSoc](https://www.xilinx.com/products/design-tools/software-zone/sdsoc.html) development environments v2017.2 can be used. PipeCNN has been tested and evaluated on the following FPGA boards/platforms. We welcome other vendors/researches to provide performance and cost information on other FPGA platforms/boards.
-
+Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) and [SDSoc](https://www.xilinx.com/products/design-tools/software-zone/sdsoc.html) development environments v2017.2 can be used. PipeCNN has been tested and evaluated on the following FPGA boards/platforms.
 
 * Terasic's [DE5-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=179&No=727) (Stratix-V A7 FPGA)
 * Terasic's [DE5a-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=251&No=988) (Arria-10 1150 FPGA)
@@ -25,11 +24,19 @@ Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-so
 * Terasic's [DE10-standard](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=180&No=1105) (Cyclone-V SXC6 FPGA)
 * Xilinx's [KCU1500](https://www.xilinx.com/products/boards-and-kits/dk-u1-kcu1500-g.html) (XCKU115 FPGA)
 
+This following table lists the performance and cost information on some of the boards we used as a reference. For each FPGA device, one needs to perform design space exploration (with hardware parameters VEC_SIZE, LANE_NUM and CONV_GP_SIZE_X) to find the optimal design that maximizes the throughput or minimizes the excution time. Since we are constantly optimzing the design and updating the codes, the performance data in the following table might be out-dated, and please use the latest version to get the exect data. We welcome other vendors/researches to provide the latest performance and cost information on other FPGA platforms/boards.
+
+| Boards     | Excution Time* | Batch Size | DSP Consumed |  Frequency|
+| :--------: |--------------:| ----------:| ------------:|----------:|
+| DE1-soc    |         150ms |          1 |            68|     122MHz|
+| DE5-net    |          15ms |         16 |           228|     206MHz|
+*Note: AlexNet was used as the benchmark. Image size is 227x227x3.
+
 
 ## Update Plans
-* Implementation of Faster-RCNN (TBD.)
-* Optimization for DE5a-net (Arria-10) targeting 500 fps of AlexNet (end of August)
-* Support for sparse or Winograd-based convolution algorithms
+* Support for sparse or Winograd-based convolution algorithms.
+* Optimization for DE5a-net (Arria-10) targeting 1000 fps of AlexNet.
+* Implementation of Faster-RCNN or YOLO9000.
 
 ## Citation
 Please kindly cite our work of PipeCNN if it helps your research:
