@@ -22,7 +22,7 @@ KERNEL_INCS =
 KERNEL_DEBUG = 1
 #additional pragma for xilinx
 CU_NUM = 1
-MAX_MEM_PORT = 1
+MAX_MEM_PORT = 0
 MEM_PORT_SIZE = 512
 
 #select the device binary name
@@ -67,8 +67,8 @@ CXXFLAGS += -DSW_EMU
 endif
 
 ifeq ($(VENDOR),xilinx)
-COMP_CONFIG = -I$(XILINX_SDACCEL)/runtime/include/1_2 -I$(HOST_INCS)  -DFPGA_DEVICE
-LINK_CONFIG = -L$(XILINX_SDACCEL)/runtime/lib/x86_64 -lxilinxopencl
+COMP_CONFIG = -I$(XILINX_SDX)/runtime/include/1_2 -I$(HOST_INCS)  -DFPGA_DEVICE -DXILINX
+LINK_CONFIG = -L$(XILINX_SDX)/runtime/lib/x86_64 -lxilinxopencl
 else ifeq ($(VENDOR),altera)
 COMP_CONFIG = $(shell aocl compile-config) -I$(HOST_INCS)  -DFPGA_DEVICE
 LINK_CONFIG = $(shell aocl link-config)
@@ -79,8 +79,19 @@ endif
 #opencl compiler options
 #xilinx
 ifeq ($(VENDOR),xilinx)
-OCC = xocc
-OCCFLAGS = --xdevice xilinx:adm-pcie-7v3:1ddr:2.0 --nk $(KERNEL_NAME):$(CU_NUM) -t $(FLOW)
+OCC = $(XILINX_SDX)/bin/xocc -DXILINX
+OCCFLAGS = --platform xilinx:kcu1500:4ddr-xpr:4.0 -t $(FLOW) -O2  --kernel_frequency 200  --save-temps  --report system \
+--memory_port_data_width memWrite:32 \
+--memory_port_data_width memRead:512 \
+--nk memWrite:1  --nk coreConv:1  --nk lrn:1  --nk maxPool:1  --nk memRead:1 \
+#--xp misc:map_connect=add.kernel.memRead_1.M_AXI_GMEM0.core.OCL_REGION_0.M00_AXI\
+#--xp misc:map_connect=add.kernel.memRead_1.M_AXI_GMEM1.core.OCL_REGION_0.M01_AXI\
+#--xp misc:map_connect=add.kernel.memRead_1.M_AXI_GMEM2.core.OCL_REGION_0.M02_AXI\
+#--xp misc:map_connect=add.kernel.memWrite_1.M_AXI_GMEM0.core.OCL_REGION_0.M00_AXI\
+#--xp misc:map_connect=add.kernel.lrn_1.M_AXI_GMEM.core.OCL_REGION_0.M00_AXI
+#--max_memory_ports lrn\
+#--xp misc:map_connect=add.kernel.lrn_1.M_AXI_GMEM0.core.OCL_REGION_0.M00_AXI\
+#--xp misc:map_connect=add.kernel.lrn_1.M_AXI_GMEM1.core.OCL_REGION_0.M01_AXI
 #memory optimization for xilinx
 ifeq ($(MAX_MEM_PORT), 1)
 OCCFLAGS += --max_memory_ports all
@@ -125,4 +136,4 @@ $(DEV_EXE): $(KERNEL_SRCS)
 
 .PHONY: clean
 clean:
-	rm -rf *.xclbin *.aocx *.aoco *.exe xocc* sdaccel* ./device/*.ll ./host/*.o ../common/*.o *.log *.jou *.mon
+	rm -rf *.xclbin *.rpt *.xtxt *.json *.dir *.aocx *.aoco *.exe xocc* sdaccel* ./device/*.ll ./host/*.o ../common/*.o *.log *.jou *.mon

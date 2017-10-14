@@ -200,7 +200,11 @@ The inference result is n02123045 tabby, tabby cat   (the prob is 56.00)
 
 ```
 
-**For Xilinx users**, directly run the makefile should generate everything. Before running the program, remember to set the correct enviroment by using the scripts provided.
+**For Xilinx users**, you need to use Pipes to replace Channels. However, SDx does not support vectorized data type for Pipes, so you need to generate paralelled Pipe instances in a separate file "pipe.cl". To generate this file, use the script "pipe_gen.py" provided. Simply run the following command:
+```
+python pipe_gen.py [lane_num] [vec_size]
+```
+After generating the correct pipe.cl file, directly run the makefile should generate everything. Before running the program, remember to set the correct enviroment by using the scripts provided.
 * setup_sdx_hw.sh (run PipeCNN on FPGAs)
 * setup_sdx_sw_emu.sh (run software emulation)
 

@@ -37,15 +37,20 @@ using namespace ocl_util;
 
 typedef  signed char  DTYPE;
 
+#ifdef XILINX
+#define USE_SDX_1DDR
+//#define USE_SDX_4DDR
+#endif
 
 //----------- Design Parameters --------------//
 // select what platform is used
-//const char *vendor_name = "Xilinx";
-//const char *vendor_name = "Altera";
-//const char *vendor_name = "AMD";
+#ifdef XILINX
+const char *vendor_name = "Xilinx";
+#else
 const char *vendor_name = "Intel";
+//const char *vendor_name = "Altera";
+#endif
 #define DEVICE_TYPE CL_DEVICE_TYPE_ACCELERATOR
-//#define DEVICE_TYPE CL_DEVICE_TYPE_GPU
 
 // SW System parameters
 #define DMA_ALIGNMENT   64
@@ -364,7 +369,61 @@ int main(int argc, char** argv)
 		for(unsigned j = 0; j < LAYER_NUM; ++j){
 
 		    weight_buf_size = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m];
+#if defined(USE_SDX_1DDR)
+			// Weights buffers for each layer
+			weights_buf[i*LAYER_NUM+j] = clCreateBuffer( context,
+				                                           CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
+				                                           weight_buf_size* sizeof(DTYPE),
+																									 weight_conv[j],
+																									 &status);
+			checkError(status, "Failed to create buffer for weights in layer");
 
+			// Bias buffers for each layer
+			bias_buf[i*LAYER_NUM+j] = clCreateBuffer(    context,
+				                                           CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
+				                                           layer_config[j][bias_size] * sizeof(DTYPE),
+				                                           bias_conv[j],
+																									 &status);
+			checkError(status, "Failed to create buffer for bias in layer");
+
+		  clEnqueueMigrateMemObjects(que_memRd[i],1, &weights_buf[i*LAYER_NUM+j],
+		    		                    0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
+
+		  clEnqueueMigrateMemObjects(que_memRd[i],1, &bias_buf[i*LAYER_NUM+j],
+		    		                    0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
+#elif defined(USE_SDX_4DDR)
+      // Weights buffers for each layer
+			cl_mem_ext_ptr_t weights_buf_ext , bias_buf_ext;
+			weights_buf_ext.flags= XCL_MEM_DDR_BANK1;//Select DDR1
+			weights_buf_ext.obj = NULL;
+			weights_buf_ext.param = 0;
+      weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context,
+				                                          CL_MEM_READ_ONLY | CL_MEM_EXT_PTR_XILINX,
+      	                                          weight_buf_size* sizeof(DTYPE),
+																								  &weights_buf_ext,
+																								  &status);
+      checkError(status, "Failed to create buffer for weights in layer");
+
+      // Bias buffers for each layer
+			bias_buf_ext.flags= XCL_MEM_DDR_BANK2;//Select DDR2
+			bias_buf_ext.obj = NULL;
+			bias_buf_ext.param = 0;
+      bias_buf[i*LAYER_NUM+j] = clCreateBuffer(context,
+				                                       CL_MEM_READ_ONLY | CL_MEM_EXT_PTR_XILINX,
+      	                                       layer_config[j][bias_size] * sizeof(DTYPE),
+				                                       &bias_buf_ext,
+			                                         &status);
+      checkError(status, "Failed to create buffer for bias in layer");
+
+      // Initializing all weights buffers, blocking write is used
+      status = clEnqueueWriteBuffer(que_memRd[i], weights_buf[i*LAYER_NUM+j], CL_TRUE,
+      	0, weight_buf_size*sizeof(DTYPE), weight_conv[j], 0, NULL, NULL);
+      checkError(status, "Failed to transfer weight");
+
+      status = clEnqueueWriteBuffer(que_memRd[i], bias_buf[i*LAYER_NUM+j], CL_TRUE,
+      	0, layer_config[j][bias_size] * sizeof(DTYPE), bias_conv[j], 0, NULL, NULL);
+      checkError(status, "Failed to transfer bias");
+#else
 			// Weights buffers for each layer
 			weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, 
 				weight_buf_size* sizeof(DTYPE), NULL, &status);
@@ -383,10 +442,54 @@ int main(int argc, char** argv)
 			status = clEnqueueWriteBuffer(que_memRd[i], bias_buf[i*LAYER_NUM+j], CL_TRUE,
 				0, layer_config[j][bias_size] * sizeof(DTYPE), bias_conv[j], 0, NULL, NULL);
 			checkError(status, "Failed to transfer bias");
-		}
+#endif
+			}
 		
 		// Create data buffers for each batch item
 		for(unsigned j = 0; j < input_config[batch_size]; ++j){
+#if defined(USE_SDX_1DDR)
+			// Input data buffers
+			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR,
+				                                                      (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, &status);
+			checkError(status, "Failed to create buffer for data in layer");
+
+			// Output results buffers
+			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE,
+				                                                        OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for output");
+
+		  clEnqueueMigrateMemObjects(que_memRd[i],1, &data_buf[i*input_config[batch_size]+j],
+		    		                     0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
+
+#elif defined(USE_SDX_4DDR)
+      // Input data buffers
+			cl_mem_ext_ptr_t data_buf_ext,output_buf_ext;
+			data_buf_ext.flags = XCL_MEM_DDR_BANK0;//Select DDR0
+			data_buf_ext.obj = NULL;
+			data_buf_ext.param = 0;
+      data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,
+				                                                      CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,
+      																												IN_BUF_SIZE * sizeof(DTYPE),
+																															&data_buf_ext,
+																														  &status);
+      checkError(status, "Failed to create buffer for data in layer");
+
+      // Output results buffers
+			output_buf_ext.flags = XCL_MEM_DDR_BANK0;//Select DDR0
+			output_buf_ext.obj = NULL;
+			output_buf_ext.param = 0;
+      output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,
+				                                                        CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,
+      																													OUT_BUF_SIZE * sizeof(DTYPE),
+																																&output_buf_ext,
+																																&status);
+      checkError(status, "Failed to create buffer for output");
+
+      // Load image data into buffers
+      status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
+      															0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
+      checkError(status, "Failed to transfer input image");
+#else
 			// Input data buffers
 			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE, 
 				IN_BUF_SIZE * sizeof(DTYPE), NULL, &status);
@@ -401,8 +504,31 @@ int main(int argc, char** argv)
 			status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
 				0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
 			checkError(status, "Failed to transfer input image");
-		}
-		
+#endif
+			}
+#ifdef USE_SDX_4DDR
+      cl_mem_ext_ptr_t fc_1_buf_ext,fc_2_buf_ext;
+			fc_1_buf_ext.flags = XCL_MEM_DDR_BANK0; //Select DDR0
+      fc_1_buf_ext.obj = NULL;
+			fc_1_buf_ext.param = 0;
+      // Allocate fc buffers
+      fc_1_buf[i] = clCreateBuffer(context,
+				                           CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,
+		                               FC_BUF_SIZE * sizeof(DTYPE),
+																	 &fc_1_buf_ext,
+																	 &status);
+      checkError(status, "Failed to create buffer for data in fc layer");
+
+			fc_2_buf_ext.flags = XCL_MEM_DDR_BANK0;//Select DDR0
+      fc_2_buf_ext.obj = NULL;
+			fc_2_buf_ext.param = 0;
+      fc_2_buf[i] = clCreateBuffer(context,
+				                           CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,
+		                               FC_BUF_SIZE * sizeof(DTYPE),
+																	 &fc_2_buf_ext,
+																	 &status);
+      checkError(status, "Failed to create buffer for data in fc layer");
+#else
 		// Allocate fc buffers
 		fc_1_buf[i] = clCreateBuffer(context,  CL_MEM_READ_WRITE, 
 				FC_BUF_SIZE * sizeof(DTYPE), NULL, &status);
@@ -411,7 +537,8 @@ int main(int argc, char** argv)
 		fc_2_buf[i] = clCreateBuffer(context,  CL_MEM_READ_WRITE, 
 				FC_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 		checkError(status, "Failed to create buffer for data in fc layer");		
-	}
+#endif
+		}
 	
 	// Execute the kernel
 	scoped_array<cl_event> memRd_event(num_devices);
@@ -420,6 +547,11 @@ int main(int argc, char** argv)
 	scoped_array<cl_event> memWr_event(num_devices);
 	scoped_array<cl_event> lrn_event(num_devices);
 	scoped_array<cl_event> finish_event(num_devices);
+#ifdef XILINX
+	scoped_array<cl_event> write_event(num_devices);
+#else
+//DO NOTHING
+#endif
 
 	// Recorde the excution time of each operation for each layer
 	cl_ulong memWr_time[LAYER_NUM];
@@ -752,6 +884,9 @@ int main(int argc, char** argv)
 	
 			}
 			
+#ifdef USE_SDX_1DDR
+			clWaitForEvents(num_devices, write_event);
+#endif			
 			// Excutes Kernel
 			//
 			if(k == 0)
@@ -792,9 +927,12 @@ int main(int argc, char** argv)
 				printf("\nLaunching kernel MemWr with local size: %d, %d, %d  (global size: %d, %d, %d)\n", 
 									(int)knl_memWr_local_size[0], (int)knl_memWr_local_size[1], (int)knl_memWr_local_size[2], 
 									(int)knl_memWr_global_size[0], (int)knl_memWr_global_size[1], (int)knl_memWr_global_size[2]);
-
+#ifdef XILINX
+            status = clEnqueueTask(que_memWr[i], knl_memWr[i], 0, NULL, &memWr_event[i]);
+#else
 			status = clEnqueueNDRangeKernel(que_memWr[i], knl_memWr[i], 3, NULL, 
 									knl_memWr_global_size, knl_memWr_local_size, 0, NULL, &memWr_event[i]);
+#endif
 			checkError(status, "Failed to launch kernel memWr");
 			
 			
@@ -945,6 +1083,10 @@ int main(int argc, char** argv)
 	#ifdef USE_OPENCV
 	softmax(output_reorder, output_one_item);
 	display(output_one_item);
+	// Show the picture
+	Mat img = imread(picture_file_path); 
+    imshow( "PipeCNN", img); 
+    waitKey(0);
 	#else
 	// Compare each results with the golden reference data
 	batch_item_size = output_config[output_w]*output_config[output_h]*output_config[output_n];
@@ -1470,7 +1612,7 @@ void display(DTYPE *output)
     synset_buf[m][ii-1]= 32;
 
 	printf("\nThe inference result is %s (the prob is %5.2f) \n\n", synset_buf[m], max);
-
+	
 }
 
 void dumpResult(){
