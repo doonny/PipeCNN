@@ -1,9 +1,10 @@
 # User Instructions
+---
 
 ## How to run PipeCNN
 Before starting to use this project, you need to install Altera or Xilinx's OpenCL SDK toolset on a Linux desktop computer, on which a supported FPGA board is also correctly installed. Clone PipeCNN from [github](https://github.com/doonny/PipeCNN), and download the test vector and golden reference files from PipeCNN's own [ModelZoo](https://github.com/doonny/PipeCNN/tree/master/data). Put all the data files in the ./data folder.
 
-After all things are ready, first enter the ./RTL folder, run the makefile (simply type *make*). This would generate the necessary RTL libraries used by PipeCNN. Secondly, back to the main project folder, run the main makefile provided, and it will take around one hour to finish all the compilations. Finally, there will be two files generated as follow:
+**For Altera users**, first enter the ./RTL folder, run the makefile (simply type *make*). This would generate the necessary RTL libraries used by PipeCNN. Secondly, back to the main project folder, run the main makefile provided, and it will take around one hour to finish all the compilations. Finally, there will be two files generated as follow:
 * *run.exe* (host executable)
 * *conv.aocx* (fpga bitstream)
 
@@ -198,21 +199,29 @@ Check Pass !!!
 The inference result is n02123045 tabby, tabby cat   (the prob is 56.00) 
 
 ```
-## Notes
+
+**For Xilinx users**, directly run the makefile should generate everything. Before running the program, remember to set the correct enviroment by using the scripts provided.
+* setup_sdx_hw.sh (run PipeCNN on FPGAs)
+* setup_sdx_sw_emu.sh (run software emulation)
+
+However, it is always recommanded to use the IDE enviroment rather than makefile-based flow.
+
+### Notes
 
 * Current host code only read one image file (in binary or .jpg) which is reused for each batch process.
 * If you are using ARM-based SoC FPGA devices, please change *PLATFORM = x86* in the makefile to *arm32*.
 * If you want to run software simulations, please change *FLOW = hw* in the makefile to *sw_emu*, and source setup_emu.sh before running.
-* For Xilinx FPGAs, it is recommanded to use the IDE enviroment rather than makefile-based flow.
+---
 
 ## Configurations
-Configuration of a new implementation with different performance and hardware resource utilizations is controlled by a header file located in *device/hw_param.cl*. Change the following macros
+**HW Configuration.** Configuration of a new FPGA accelerator with different performance and hardware resource utilizations is controlled by a header file located in *device/hw_param.cl*. Change the following macros
 * VEC_SIZE
 * LANE_NUM
+* CONV_GP_SIZE_X
 
-to appropriate ones. The default setting is VEC_SIZE=8, LANE_NUM=16, which achieves the shortest classification time on the DE5-net board.
+to appropriate ones. The default setting is VEC_SIZE=8, LANE_NUM=16, CONV_GP_SIZE_X=7 which achieves the shortest classification time on the DE5-net board.
 
-Configuration of different CNN models is done by a header file located in *host/layer_config.h*. Select one of the model configurations provided and recompile the host before running the test. Currently, the following models have been tested:
+**SW Configuration.** Configuration of different CNN models is done by a header file located in *host/layer_config.h*. Select one of the model configurations provided and recompile the host before running the test. Currently, the following models have been tested:
 * AlexNet (CaffeNet)
 * Vgg-16
 
