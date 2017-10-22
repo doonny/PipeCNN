@@ -1,7 +1,7 @@
 # PipeCNN
 
 ## About 
-**PipeCNN** is an OpenCL-based FPGA Accelerator for Large-Scale Convolutinal Neural Networks (CNNs).
+**PipeCNN** is an OpenCL-based FPGA Accelerator for Large-Scale Convolutional Neural Networks (CNNs).
 There is a growing trend among the FPGA community to utilize High Level Synthesis (HLS) tools to design
 and implement customized circuits on FPGAs. Compared with RTL-based design methodology, the HLS tools provide faster hardware development
 cycle by automatically synthesizing an algorithm in high-level languages (e.g. C/C++) to RTL/hardware. [OpenCL™](https://www.khronos.org/opencl/) is an open, emergying cross-platform parallel programming language that can be used in both GPU and FPGA developments. The main goal of this project is to provide a generic, yet efficient OpenCL-based design of CNN accelerator on FPGAs. Our design is scalable both in performance and hardware resource, and thus can be deployed on a variety of FPGA platforms.
