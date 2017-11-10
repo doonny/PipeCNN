@@ -43,7 +43,7 @@ This following table lists the performance and cost information on some of the b
 ## Citation
 Please kindly cite our work of PipeCNN if it helps your research:
 ```
-Dong Wang, Jiangjing An and Ke Xu, “PipeCNN: An OpenCL-Based FPGA Accelerator for Large-Scale Convolution Neuron Networks”, https://arxiv.org/abs/1611.02450, 2016.
+Dong Wang, Ke Xu and Diankun Jiang, “PipeCNN: An OpenCL-Based Open-Source FPGA Accelerator for Convolution Neural Networks”, FPT 2017.
 ```
 
 
