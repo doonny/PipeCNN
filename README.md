@@ -15,7 +15,7 @@ First, download the pre-trained CNN models, input test vectors and golden refere
 For users who are using Xilinx's SDx environments, it is recommended to use the IDE instead of makefiles. Currently, only Intel's OpenCL SDK v16.1 and Xilinx's SDAccel v2017.2 are supported. Please carefully read the [User Instructions](https://github.com/doonny/PipeCNN/tree/master/documents) before using.
 
 ## Boards and Performances
-Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) and [SDSoc](https://www.xilinx.com/products/design-tools/software-zone/sdsoc.html) development environments v2017.2 can be used. PipeCNN has been tested and evaluated on the following FPGA boards/platforms.
+Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) development environment v2017.2 can be used. PipeCNN has been tested and evaluated on the following FPGA boards/platforms.
 
 * Terasic's [DE5-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=179&No=727) (Stratix-V A7 FPGA)
 * Terasic's [DE5a-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=251&No=988) (Arria-10 1150 FPGA)
