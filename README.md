@@ -42,7 +42,7 @@ Now you can run ImageNet classification on PipeCNN, and measure the top-1/5 accu
 
 The following piture shows that the demo runs on our own computer with the DE5-net board.
 
-![ImageNet-Demo](https://github.com/doonny/PipeCNN/tree/master/documents/PipeCNN-Demo-01.jpg)
+![ImageNet-Demo](https://github.com/doonny/PipeCNN/tree/master/documents/PipeCNN-Demo-01.jpg "ImageNet-Demo")
 
 
 ## Update Plans
