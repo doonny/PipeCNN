@@ -48,7 +48,6 @@ typedef  signed char  DTYPE;
 const char *vendor_name = "Xilinx";
 #else
 const char *vendor_name = "Intel";
-//const char *vendor_name = "Altera";
 #endif
 #define DEVICE_TYPE CL_DEVICE_TYPE_ACCELERATOR
 
@@ -77,55 +76,6 @@ char  synset_buf[1000][1024]={0};
 DTYPE searchTop[1024];
 float accuracy1=0;
 float accuracy5=0;
-
-
-/*
-// Test FC only
-// Original problem size
-// File size is in num of DTYPE numbers
-#define IMAGE_FILE_SIZE   (27*27*96)
-//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
-#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
-#define CONV_NUM          4
-#define LAYER_NUM         7
-
-const char *weight_file_path = "./data/data_alex/weights.dat";
-const char *input_file_path = "./data/data_alex/lrn1.dat";
-const char *ref_file_path = "./data/data_alex/fc8.dat";
-const char *dump_file_path = "./result_dump.txt";
-*/
-
-
-/*
-// Test FC only
-// Original problem size
-// File size is in num of DTYPE numbers
-#define IMAGE_FILE_SIZE   (6*6*256)
-//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
-#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
-#define CONV_NUM          0
-#define LAYER_NUM         3
-
-const char *weight_file_path = "./data/data_alex/weights.dat";
-const char *input_file_path = "./data/data_alex/pool5.dat";
-const char *ref_file_path = "./data/data_alex/fc8.dat";
-const char *dump_file_path = "./result_dump.txt";
-*/
-
-/*
-// Test CONV only
-// Original problem size
-// File size is in num of DTYPE numbers
-#define IMAGE_FILE_SIZE   (227*227*3)
-//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
-#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
-#define LAYER_NUM         2
-
-const char *weight_file_path = "./data/data_alex/weights.dat";
-const char *input_file_path = "./data/data_alex/image.dat";
-const char *ref_file_path = "./data/data_alex/pool2.dat";
-const char *dump_file_path = "./result_dump.txt";
-*/
 
 
 // AlexNet
@@ -476,10 +426,6 @@ int main(int argc, char** argv)
 			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context, CL_MEM_READ_WRITE, OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for output");
 
-			//// Load image data into buffers
-			//status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
-			//	0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
-			//checkError(status, "Failed to transfer input image");
 #endif
 		}
 #ifdef USE_SDX_4DDR
@@ -575,23 +521,19 @@ int main(int argc, char** argv)
 			unsigned argi = 0;
 
 			// Convolution tasks (conv_x,conv_y) are divided into multiple groups
-			// each group process CONV_GP_SIZE_X*CONV_GP_SIZE_Y convolutions in parallel
 			conv_group_num_dim1   = ceil((float)layer_config[j][conv_x]/CONV_GP_SIZE_X);
 			conv_group_num_dim2   = ceil((float)layer_config[j][conv_y]/CONV_GP_SIZE_Y);
-			if(layer_config[j][conv_x]==1){ // when only one group for FC layer
+			if(layer_config[j][conv_x]==1){
 				conv_win_size_dim1  = layer_config[j][weight_w];
 				conv_group_rem_dim1   = layer_config[j][weight_w];
 			}
 			else{
 				conv_win_size_dim1  = layer_config[j][weight_w]+(CONV_GP_SIZE_X-1)*layer_config[j][conv_stride];
-				// actual number of input pixels need to be read in the last group according to the number of the remaining valid conv items in the last group
-				// the remaining valid conv items is layer_config[j][conv_x]%CONV_GP_SIZE_X
 				if(layer_config[j][conv_x]%CONV_GP_SIZE_X==0)
 					conv_group_rem_dim1   = CONV_GP_SIZE_X*layer_config[j][weight_w];
 				else
 					conv_group_rem_dim1   = layer_config[j][conv_x]%CONV_GP_SIZE_X*layer_config[j][weight_w];
 			}
-			// In this version, grouping is not performed in the column (y) direction, i.e., CONV_GP_SIZE_Y=1
 			conv_win_size_dim2    = layer_config[j][weight_h];
 			conv_group_rem_dim2   = layer_config[j][weight_h];
 			conv_win_size_dim1x2x3  = conv_win_size_dim1*conv_win_size_dim2*layer_config[j][weight_n];
@@ -780,9 +722,6 @@ int main(int argc, char** argv)
 					batch_size_in_dim_log = log(batch_size_in_dim)/log(2);
 					batch_indx_dim1 = k&(~((mask>>batch_size_in_dim_log)<<batch_size_in_dim_log));
 					batch_indx_dim2 = k>>batch_size_in_dim_log;
-					//printf("k=%d (%d, %d)\n", k, batch_size_in_dim, batch_size_in_dim_log);
-					//printf("batch_indx_dim1=%d\n", batch_indx_dim1);
-					//printf("batch_indx_dim2=%d\n", batch_indx_dim2);
 				}
 			}
 			else{ // Normal WR Operations
@@ -1079,18 +1018,15 @@ void readDataBack()
 
 	if(LAYER_NUM>=CONV_NUM){  //Select with batch item you would like to verify from the last conv and all fc output
 		printf("Selected item = %d from the combined batch results in fc buffers\n", batch_item_num);
-		// Extract one results from all batch arranged results stored in fc buffers
 		extractOutput(output, output_one_item, batch_item_num, input_config[batch_size], output_config[output_w], output_config[output_h], output_config[output_n]);
 	}
 	else{
 		if(layer_config[LAYER_NUM-1][pool_on]==1)
-			// Copy results from one of the output/data buffers
 			extractOutput(output, output_one_item, 0, 1, layer_config[LAYER_NUM-1][pool_x], layer_config[LAYER_NUM-1][pool_y], layer_config[LAYER_NUM-1][pool_z]);
 		else
 			extractOutput(output, output_one_item, 0, 1, layer_config[LAYER_NUM-1][conv_x], layer_config[LAYER_NUM-1][conv_y], layer_config[LAYER_NUM-1][conv_z]);
 	}
 
-	// Reorder one item of the batch results into scalar format
 	reorderOutput(output_one_item, output_reorder, output_config[output_w], output_config[output_h], output_config[output_n]);
 }
 
@@ -1244,8 +1180,6 @@ int prepare()
 		// Second, perform padding on dim4, when it is not divisible by LANE_NUM
 		if(layer_config[ll][weight_m]%LANE_NUM != 0){
 			printf("\nWarnning: layer-%d requires padding zero-value feature maps for give param LANE_NUM=%d\n", ll+1, LANE_NUM);
-			// change the num of output featuremaps to new value that is divisible by LANE_NUM
-			// Note: the num of input feature maps of next layer remains the same
 			layer_config[ll][weight_m] = ceil((float)layer_config[ll][weight_m]/LANE_NUM)*LANE_NUM;
 			layer_config[ll][bias_size] = layer_config[ll][weight_m];
 			printf("      original num of feature maps is %d, new value is %d\n", layer_config_original[ll][weight_m], layer_config[ll][weight_m]);
@@ -1306,7 +1240,6 @@ int prepare()
 			return 1;
 		}
 
-		// TODO: check buffer size, hw params
 		if(layer_config[ll][conv_x]==1){ // when only one group for FC layer
 			conv_win_size_dim1  = layer_config[ll][weight_w];
 		}
@@ -1867,7 +1800,6 @@ void cleanup()
 		clReleaseContext(context);
 	}
 
-	// Release the memory resource allocated
 	alignedFree(weights);
 	alignedFree(image);
 	alignedFree(data_init);

@@ -1,5 +1,9 @@
 # Revision History
 
+* 2018.02.07
+	* Update kernel and host programs to improve performance.
+	* Add ImageNet classification Demo.
+
 * 2017.10.14 
 	* Add support for Xilinx's SDAccel tool (2017.02).
 	
