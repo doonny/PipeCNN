@@ -39,16 +39,15 @@ This following table lists the performance and cost information on some of the b
 ## Demos
 Now you can run ImageNet classification on PipeCNN, and measure the top-1/5 accuracy on your own dataset.
 
+First, set **USE_OPENCV = 0** in the Makefile. Secondly, download the ImageNet validation dataset, extract and place all the pictures in the "/data" folder. Rename the variable "picture_file_path_head" in the host file to indicate the correct path. Finally, recompile the host program and run PipeCNN.
 
 The following piture shows that the demo runs on our own computer with the DE5-net board.
 
-![ImageNet-Demo](https://github.com/doonny/PipeCNN/tree/master/documents/PipeCNN-Demo-01.jpg "ImageNet-Demo")
-
+![DE5-net-Demo](documents/Demo-DE5-net.gif)
 
 ## Update Plans
 * Support for sparse or Winograd-based convolution algorithms.
-* Optimization for DE5a-net (Arria-10) targeting 1000 fps of AlexNet.
-* Implementation of Faster-RCNN or YOLO9000.
+* Implementation of Faster-RCNN and YOLO9000.
 
 ## Citation
 Please kindly cite our work of PipeCNN if it helps your research:
