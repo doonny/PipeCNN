@@ -15,7 +15,11 @@ VENDOR = altera
 PLATFORM = x86
 #optinal flows are hw|hw_emu|sw_emu
 FLOW        = sw_emu
+ifeq ($(VENDOR),xilinx)
+KERNEL_SRCS = ./device/conv_pipe_xilinx.cl
+else
 KERNEL_SRCS = ./device/conv_pipe.cl
+endif
 KERNEL_NAME = conv
 KERNEL_DEFS =
 KERNEL_INCS = 

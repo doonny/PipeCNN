@@ -15,14 +15,17 @@ First, download the pre-trained CNN models, input test vectors and golden refere
 For users who are using Xilinx's SDx environments, it is recommended to use the IDE instead of makefiles. Currently, only Intel's OpenCL SDK v16.1 and Xilinx's SDAccel v2017.2 are supported. Please carefully read the [User Instructions](https://github.com/doonny/PipeCNN/tree/master/documents) before using.
 
 ## Boards and Performances
-Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) development environment v2017.2 can be used. PipeCNN has been tested and evaluated on the following FPGA boards/platforms.
+Currently, we use [Intel's OpenCL SDK](https://www.altera.com/products/design-software/embedded-software-developers/opencl/overview.html) v16.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Altera's FPGAs. For Xilinx FPGAs, the [SDAccel](https://www.xilinx.com/products/design-tools/software-zone/sdaccel.html) development environment v2017.2 can be used. PipeCNN has been tested and evaluated on the following FPGA boards/platforms. Noting that SDSoC has not been fully tested, and if you have any results, please kindly email us the latest updates.
 
+The following boards have been tested by using Intel OpenCL SDK v16.1:
 * Terasic's [DE5-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=179&No=727) (Stratix-V A7 FPGA)
 * Terasic's [DE5a-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=251&No=988) (Arria-10 1150 FPGA)
 * Terasic's [DE1-soc](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=180&No=870) (Cyclone-V SEA5 FPGA)
 * Terasic's [DE10-standard](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=180&No=1105) (Cyclone-V SXC6 FPGA)
-* Xilinx's [KCU1500](https://www.xilinx.com/products/boards-and-kits/dk-u1-kcu1500-g.html) (XCKU115 FPGA)
 * Speed-Clouds' [SC-IMB+SC-VMB](http://speed-clouds.com/index.php?c=news&a=page&id=74) (Arria-10 SX480)
+
+The following boards have been tested by using Xilinx SDAccel v2017.2:
+* Xilinx's [KCU1500](https://www.xilinx.com/products/boards-and-kits/dk-u1-kcu1500-g.html) (XCKU115 FPGA)
 
 This following table lists the performance and cost information on some of the boards we used as a reference. For each FPGA device, one needs to perform design space exploration (with hardware parameters VEC_SIZE, LANE_NUM and CONV_GP_SIZE_X) to find the optimal design that maximizes the throughput or minimizes the excution time. Suggested hardware parameters for the above boards are summarized [here](https://github.com/doonny/PipeCNN/tree/master/documents). Since we are constantly optimzing the design and updating the codes, the performance data in the following table might be out-dated, and please use the latest version to get the exect data. We welcome other vendors/researches to provide the latest performance and cost information on other FPGA platforms/boards.
 
@@ -32,6 +35,13 @@ This following table lists the performance and cost information on some of the b
 | DE5-net    |          15ms |         16 |           228|     206MHz|
 
 *Note: AlexNet was used as the benchmark. Image size is 227x227x3.
+
+## Demos
+Now you can run ImageNet classification on PipeCNN, and measure the top-1/5 accuracy on your own dataset.
+
+
+The following piture shows that the demo runs on our own computer with the DE5-net board.
+![ImageNet-Demo](https://github.com/doonny/PipeCNN/tree/master/documents/PipeCNN-Demo-01.jpg)
 
 
 ## Update Plans

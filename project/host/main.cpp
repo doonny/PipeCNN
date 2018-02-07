@@ -38,8 +38,8 @@ using namespace ocl_util;
 typedef  signed char  DTYPE;
 
 #ifdef XILINX
-#define USE_SDX_1DDR
-//#define USE_SDX_4DDR
+//#define USE_SDX_1DDR  // reserved for v7-690T device, DO NOT USE
+//#define USE_SDX_4DDR  // reverved for 4-bank DDR BSP, DO NOT USE
 #endif
 
 //----------- Design Parameters --------------//
@@ -64,10 +64,19 @@ const char *vendor_name = "Intel";
 #define MEAN_DATA_WIDTH   256
 #define MEAN_DATA_HEIGHT  256
 #define MEAN_DATA_CHANNEl 3
-const char *mean_data_file_path   = "./data/picture/mean_data.dat";
-const char *picture_file_path     = "./data/picture/cat.jpg";
-const char *synset_word_file_path = "./data/picture/synset_words.txt";
+#define PICTURE_NUM 8000
+#define MAX_PIC_NUM 50000
+const char *mean_data_file_path    = "./data/imagenet/mean_data.dat";
+const char *synset_word_file_path  = "./data/imagenet/synset_words.txt";
+const char *LabelPath		       = "./data/imagenet/val.txt";
+char  picture_file_path_head[100]  = "/home/dwang/Work/imagenet/ilsvrc2012/ILSVRC2012_img_val/ILSVRC2012_val_";
+char  picture_file_path[100];
+int   label[MAX_PIC_NUM]={0};
+char  label_buf[MAX_PIC_NUM][1024]={0};
 char  synset_buf[1000][1024]={0};
+DTYPE searchTop[1024];
+float accuracy1=0;
+float accuracy5=0;
 
 
 /*
@@ -237,23 +246,27 @@ unsigned layer_config_original[LAYER_NUM][NUM_CONFIG_ITEM];
 
 #ifdef USE_OPENCV
 int  load_picture(DTYPE *image);
+void getAccuracy(DTYPE *output_reorder,int num);
+void labelNum();
+void numtochar(int num,char *end);
 #endif
+void loadImageToBuffer(int num);
 int  prepare();
+void readDataBack();
+void verifyResult(int num);
 void dumpResult();
 void reorderWeights(DTYPE *weights, DTYPE *weight_buf, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned dim3_original, unsigned dim4_original, unsigned offset, unsigned padding_offset, unsigned vecSize, unsigned laneNum);
 void reorderBias(DTYPE *dataIn, DTYPE *bias, unsigned offset, unsigned padding_offset, unsigned dim4, unsigned dim4_original, unsigned laneNum);
 void reorderOutput(DTYPE *output, DTYPE *output_reorder, unsigned dim1, unsigned dim2, unsigned dim3);
 void extractOutput(DTYPE *output, DTYPE *output_one_item, unsigned item_num, unsigned batch_size, unsigned dim1, unsigned dim2, unsigned dim3);
 void softmax(DTYPE *output_reorder , DTYPE *output);
-void display(DTYPE *output);
+int getProb(DTYPE *output);
 void cleanup();
 
 
 int main(int argc, char** argv)
 {
 	cl_int status;
-	float std_err;  // standard errors
-	unsigned int err_num;
 
 	unsigned int conv_output_num;
 	unsigned int conv_loop_cnt;
@@ -265,18 +278,15 @@ int main(int argc, char** argv)
 	unsigned char batch_indx_dim1;
 	unsigned char batch_indx_dim2;
 
-	unsigned int read_buf_size;
-	unsigned int batch_item_size;
 	unsigned int weight_buf_size;
 
-	//size_t knl_memRd_global_size[3];
-	//size_t knl_memRd_local_size[3];
 	size_t knl_memWr_global_size[3];
 	size_t knl_memWr_local_size[3];
 	size_t knl_lrn_global_size[3];
 	size_t knl_lrn_local_size[3];
 
 	Timer t;  // Timer used for performance measurement
+	float time;
 
 	if (argc != 2){
 	printf("Error: wrong commad format, usage:\n");
@@ -288,13 +298,6 @@ int main(int argc, char** argv)
 	printf("***************************************************\n");
 	printf("PipeCNN: An OpenCL-Based FPGA Accelerator for CNNs \n");
 	printf("***************************************************\n");
-
-	// Prepare compute data
-	status = prepare();
-	if(status == 1){
-		printf("Allocate memory for data and weights failed !!!\n");
-		return false;
-	}
 
 	// Connect to the desired platform
 	platform_id = findPlatform(vendor_name);
@@ -343,6 +346,14 @@ int main(int argc, char** argv)
 	fc_1_buf.reset(num_devices);
 	fc_2_buf.reset(num_devices);
 
+
+	// Prepare compute data
+	status = prepare();
+	if(status == 1){
+		printf("Allocate memory for data and weights failed !!!\n");
+		return false;
+	}
+
 	// Create qeues, kernels and mem objs
 	for(unsigned i = 0; i < num_devices; ++i) {
 		// Command queue
@@ -372,176 +383,125 @@ int main(int argc, char** argv)
 		checkError(status, "Failed to create lrn kernel");
 
 		// Mems
+		// Create weight and bias buffers for each layer
 		for(unsigned j = 0; j < LAYER_NUM; ++j){
 
 		    weight_buf_size = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m];
 #if defined(USE_SDX_1DDR)
 			// Weights buffers for each layer
-			weights_buf[i*LAYER_NUM+j] = clCreateBuffer( context,
-				                                           CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
-				                                           weight_buf_size* sizeof(DTYPE),
-																									 weight_conv[j],
-																									 &status);
+			weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context,CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,weight_buf_size* sizeof(DTYPE),weight_conv[j],&status);
 			checkError(status, "Failed to create buffer for weights in layer");
 
 			// Bias buffers for each layer
-			bias_buf[i*LAYER_NUM+j] = clCreateBuffer(    context,
-				                                           CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
-				                                           layer_config[j][bias_size] * sizeof(DTYPE),
-				                                           bias_conv[j],
-																									 &status);
+			bias_buf[i*LAYER_NUM+j] = clCreateBuffer(context,CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,layer_config[j][bias_size] * sizeof(DTYPE),bias_conv[j],&status);
 			checkError(status, "Failed to create buffer for bias in layer");
 
-		  clEnqueueMigrateMemObjects(que_memRd[i],1, &weights_buf[i*LAYER_NUM+j],
-		    		                    0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
+			clEnqueueMigrateMemObjects(que_memRd[i],1, &weights_buf[i*LAYER_NUM+j],0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
 
-		  clEnqueueMigrateMemObjects(que_memRd[i],1, &bias_buf[i*LAYER_NUM+j],
-		    		                    0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
+			clEnqueueMigrateMemObjects(que_memRd[i],1, &bias_buf[i*LAYER_NUM+j],0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
 #elif defined(USE_SDX_4DDR)
-      // Weights buffers for each layer
+			// Weights buffers for each layer
 			cl_mem_ext_ptr_t weights_buf_ext , bias_buf_ext;
 			weights_buf_ext.flags= XCL_MEM_DDR_BANK1;//Select DDR1
 			weights_buf_ext.obj = NULL;
 			weights_buf_ext.param = 0;
-      weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context,
-				                                          CL_MEM_READ_ONLY | CL_MEM_EXT_PTR_XILINX,
-      	                                          weight_buf_size* sizeof(DTYPE),
-																								  &weights_buf_ext,
-																								  &status);
-      checkError(status, "Failed to create buffer for weights in layer");
-
-      // Bias buffers for each layer
-			bias_buf_ext.flags= XCL_MEM_DDR_BANK2;//Select DDR2
-			bias_buf_ext.obj = NULL;
-			bias_buf_ext.param = 0;
-      bias_buf[i*LAYER_NUM+j] = clCreateBuffer(context,
-				                                       CL_MEM_READ_ONLY | CL_MEM_EXT_PTR_XILINX,
-      	                                       layer_config[j][bias_size] * sizeof(DTYPE),
-				                                       &bias_buf_ext,
-			                                         &status);
-      checkError(status, "Failed to create buffer for bias in layer");
-
-      // Initializing all weights buffers, blocking write is used
-      status = clEnqueueWriteBuffer(que_memRd[i], weights_buf[i*LAYER_NUM+j], CL_TRUE,
-      	0, weight_buf_size*sizeof(DTYPE), weight_conv[j], 0, NULL, NULL);
-      checkError(status, "Failed to transfer weight");
-
-      status = clEnqueueWriteBuffer(que_memRd[i], bias_buf[i*LAYER_NUM+j], CL_TRUE,
-      	0, layer_config[j][bias_size] * sizeof(DTYPE), bias_conv[j], 0, NULL, NULL);
-      checkError(status, "Failed to transfer bias");
-#else
-			// Weights buffers for each layer
-			weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY,
-				weight_buf_size* sizeof(DTYPE), NULL, &status);
+			weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context,CL_MEM_READ_ONLY | CL_MEM_EXT_PTR_XILINX,weight_buf_size* sizeof(DTYPE),&weights_buf_ext,&status);
 			checkError(status, "Failed to create buffer for weights in layer");
 
 			// Bias buffers for each layer
-			bias_buf[i*LAYER_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY,
-				layer_config[j][bias_size] * sizeof(DTYPE), NULL, &status);
+			bias_buf_ext.flags= XCL_MEM_DDR_BANK2;//Select DDR2
+			bias_buf_ext.obj = NULL;
+			bias_buf_ext.param = 0;
+			bias_buf[i*LAYER_NUM+j] = clCreateBuffer(context,CL_MEM_READ_ONLY | CL_MEM_EXT_PTR_XILINX,layer_config[j][bias_size] * sizeof(DTYPE),&bias_buf_ext,&status);
 			checkError(status, "Failed to create buffer for bias in layer");
 
 			// Initializing all weights buffers, blocking write is used
-			status = clEnqueueWriteBuffer(que_memRd[i], weights_buf[i*LAYER_NUM+j], CL_TRUE,
-				0, weight_buf_size*sizeof(DTYPE), weight_conv[j], 0, NULL, NULL);
+			status = clEnqueueWriteBuffer(que_memRd[i], weights_buf[i*LAYER_NUM+j], CL_TRUE,0, weight_buf_size*sizeof(DTYPE), weight_conv[j], 0, NULL, NULL);
 			checkError(status, "Failed to transfer weight");
 
-			status = clEnqueueWriteBuffer(que_memRd[i], bias_buf[i*LAYER_NUM+j], CL_TRUE,
-				0, layer_config[j][bias_size] * sizeof(DTYPE), bias_conv[j], 0, NULL, NULL);
+			status = clEnqueueWriteBuffer(que_memRd[i], bias_buf[i*LAYER_NUM+j], CL_TRUE,0, layer_config[j][bias_size] * sizeof(DTYPE), bias_conv[j], 0, NULL, NULL);
+			checkError(status, "Failed to transfer bias");
+#else // IntelFPGA
+			// Weights buffers for each layer
+			weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, weight_buf_size* sizeof(DTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for weights in layer");
+
+			// Bias buffers for each layer
+			bias_buf[i*LAYER_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, layer_config[j][bias_size] * sizeof(DTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for bias in layer");
+
+			// Initializing all weights buffers, blocking write is used
+			status = clEnqueueWriteBuffer(que_memRd[i], weights_buf[i*LAYER_NUM+j], CL_TRUE, 0, weight_buf_size*sizeof(DTYPE), weight_conv[j], 0, NULL, NULL);
+			checkError(status, "Failed to transfer weight");
+
+			status = clEnqueueWriteBuffer(que_memRd[i], bias_buf[i*LAYER_NUM+j], CL_TRUE, 0, layer_config[j][bias_size] * sizeof(DTYPE), bias_conv[j], 0, NULL, NULL);
 			checkError(status, "Failed to transfer bias");
 #endif
-			}
+		}
 
 		// Create data buffers for each batch item
 		for(unsigned j = 0; j < input_config[batch_size]; ++j){
 #if defined(USE_SDX_1DDR)
 			// Input data buffers
-			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR,
-				                                                      (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, &status);
+			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR,(layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, &status);
 			checkError(status, "Failed to create buffer for data in layer");
 
 			// Output results buffers
-			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE,
-				                                                        OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,CL_MEM_READ_WRITE,OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for output");
 
-		  clEnqueueMigrateMemObjects(que_memRd[i],1, &data_buf[i*input_config[batch_size]+j],
-		    		                     0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
+			clEnqueueMigrateMemObjects(que_memRd[i],1, &data_buf[i*input_config[batch_size]+j], 0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
 
 #elif defined(USE_SDX_4DDR)
-      // Input data buffers
+			// Input data buffers
 			cl_mem_ext_ptr_t data_buf_ext,output_buf_ext;
 			data_buf_ext.flags = XCL_MEM_DDR_BANK0;//Select DDR0
 			data_buf_ext.obj = NULL;
 			data_buf_ext.param = 0;
-      data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,
-				                                                      CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,
-      																												IN_BUF_SIZE * sizeof(DTYPE),
-																															&data_buf_ext,
-																														  &status);
-      checkError(status, "Failed to create buffer for data in layer");
-
-      // Output results buffers
-			output_buf_ext.flags = XCL_MEM_DDR_BANK0;//Select DDR0
-			output_buf_ext.obj = NULL;
-			output_buf_ext.param = 0;
-      output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,
-				                                                        CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,
-      																													OUT_BUF_SIZE * sizeof(DTYPE),
-																																&output_buf_ext,
-																																&status);
-      checkError(status, "Failed to create buffer for output");
-
-      // Load image data into buffers
-      status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
-      															0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
-      checkError(status, "Failed to transfer input image");
-#else
-			// Input data buffers
-			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE,
-				IN_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,IN_BUF_SIZE * sizeof(DTYPE),&data_buf_ext,&status);
 			checkError(status, "Failed to create buffer for data in layer");
 
 			// Output results buffers
-			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context,  CL_MEM_READ_WRITE,
-				OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+			output_buf_ext.flags = XCL_MEM_DDR_BANK0;//Select DDR0
+			output_buf_ext.obj = NULL;
+			output_buf_ext.param = 0;
+			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,OUT_BUF_SIZE * sizeof(DTYPE),&output_buf_ext,&status);
+			checkError(status, "Failed to create buffer for output");
+#else // IntelFPGA
+			// Input data buffers
+			data_buf[i*input_config[batch_size]+j] = clCreateBuffer(context, CL_MEM_READ_WRITE, IN_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for data in layer");
+
+			// Output results buffers
+			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context, CL_MEM_READ_WRITE, OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for output");
 
-			// Load image data into buffers
-			status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
-				0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
-			checkError(status, "Failed to transfer input image");
+			//// Load image data into buffers
+			//status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
+			//	0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
+			//checkError(status, "Failed to transfer input image");
 #endif
-			}
+		}
 #ifdef USE_SDX_4DDR
-      cl_mem_ext_ptr_t fc_1_buf_ext,fc_2_buf_ext;
-			fc_1_buf_ext.flags = XCL_MEM_DDR_BANK0; //Select DDR0
-      fc_1_buf_ext.obj = NULL;
-			fc_1_buf_ext.param = 0;
-      // Allocate fc buffers
-      fc_1_buf[i] = clCreateBuffer(context,
-				                           CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,
-		                               FC_BUF_SIZE * sizeof(DTYPE),
-																	 &fc_1_buf_ext,
-																	 &status);
-      checkError(status, "Failed to create buffer for data in fc layer");
-
-			fc_2_buf_ext.flags = XCL_MEM_DDR_BANK0;//Select DDR0
-      fc_2_buf_ext.obj = NULL;
-			fc_2_buf_ext.param = 0;
-      fc_2_buf[i] = clCreateBuffer(context,
-				                           CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,
-		                               FC_BUF_SIZE * sizeof(DTYPE),
-																	 &fc_2_buf_ext,
-																	 &status);
-      checkError(status, "Failed to create buffer for data in fc layer");
-#else
+		cl_mem_ext_ptr_t fc_1_buf_ext,fc_2_buf_ext;
+		fc_1_buf_ext.flags = XCL_MEM_DDR_BANK0; //Select DDR0
+		fc_1_buf_ext.obj = NULL;
+		fc_1_buf_ext.param = 0;
 		// Allocate fc buffers
-		fc_1_buf[i] = clCreateBuffer(context,  CL_MEM_READ_WRITE,
-				FC_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+		fc_1_buf[i] = clCreateBuffer(context,CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,FC_BUF_SIZE * sizeof(DTYPE),&fc_1_buf_ext,&status);
 		checkError(status, "Failed to create buffer for data in fc layer");
 
-		fc_2_buf[i] = clCreateBuffer(context,  CL_MEM_READ_WRITE,
-				FC_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+		fc_2_buf_ext.flags = XCL_MEM_DDR_BANK0;//Select DDR0
+		fc_2_buf_ext.obj = NULL;
+		fc_2_buf_ext.param = 0;
+		fc_2_buf[i] = clCreateBuffer(context,CL_MEM_READ_WRITE | CL_MEM_EXT_PTR_XILINX,FC_BUF_SIZE * sizeof(DTYPE),&fc_2_buf_ext,&status);
+		checkError(status, "Failed to create buffer for data in fc layer");
+#else // IntelFPGA
+		// Allocate fc buffers
+		fc_1_buf[i] = clCreateBuffer(context,  CL_MEM_READ_WRITE, FC_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+		checkError(status, "Failed to create buffer for data in fc layer");
+
+		fc_2_buf[i] = clCreateBuffer(context,  CL_MEM_READ_WRITE, FC_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 		checkError(status, "Failed to create buffer for data in fc layer");
 #endif
 		}
@@ -552,19 +512,17 @@ int main(int argc, char** argv)
 	scoped_array<cl_event> pool_event(num_devices);
 	scoped_array<cl_event> memWr_event(num_devices);
 	scoped_array<cl_event> lrn_event(num_devices);
-	scoped_array<cl_event> finish_event(num_devices);
 
 	// Recorde the excution time of each operation for each layer
+#ifndef USE_OPENCV
 	cl_ulong memWr_time[LAYER_NUM];
 	cl_ulong conv_time[LAYER_NUM];
 	cl_ulong pool_time[LAYER_NUM];
 	cl_ulong memRd_time[LAYER_NUM];
 	cl_ulong lrn_time[LAYER_NUM];
+#endif
 
-	// Recorde the start time
-	t.start();
-
-	unsigned iter_num;
+	unsigned       iter_num;
 	unsigned short out_dim1xbatch;
 	unsigned int   out_dim1x2xbatch;
 	unsigned char  padding_offset;
@@ -577,19 +535,32 @@ int main(int argc, char** argv)
 	unsigned char  weight_dim1x2;
 	unsigned int   weight_dim1x2x3;
 	unsigned short weight_dim4_div_LaneNum;
+	unsigned int   pic_num =1;
 
 	// Kernel excutions main loops
 	for(unsigned i = 0; i < num_devices; ++i) {
+
+
+#ifdef USE_OPENCV
+		// Run PipeCNN for multiple input pictures
+		for (pic_num = 1; pic_num <=PICTURE_NUM; ++pic_num){
+#endif
+		loadImageToBuffer(pic_num);
+
+		// Recorde the start time
+		t.start();
 
 		// Each iteration excutes one layer convolution
 		// MemRd -> Conv(Relu) -> (MaxPool) -> MemWr -> (Lrn)
 		for(unsigned char j = 0; j < LAYER_NUM; ++j){
 
+#ifndef USE_OPENCV
 			memWr_time[j] =0;
 			conv_time[j]  =0;
 			pool_time[j]  =0;
 			memRd_time[j] =0;
 			lrn_time[j]   =0;
+#endif
 
 			if(j<CONV_NUM)
 				iter_num = input_config[batch_size]; // for conv layers, process by batch_size time
@@ -696,7 +667,6 @@ int main(int argc, char** argv)
 
 			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_uint), &conv_win_size_dim1x2x3);
 			checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
-
 			// Select the kernel input mem object source
 			// data_buf -> conv1 -> output_buf -> lrn1 -> data_buf -> conv2 -> output_buf -> lrn2 -> data_buf
 			// -> conv3 -> output_buf -> conv4 -> output_buf -> ...
@@ -886,23 +856,25 @@ int main(int argc, char** argv)
 			}
 
 #ifdef USE_SDX_1DDR
+			// Wait until all data are send to DDR memory
 			clWaitForEvents(num_devices, write_event);
+			clReleaseEvent(write_event[0]);
+			checkError(status, "Failed to release buffer write event object");
 #endif
 			// Excutes Kernel
 			//
-			if(k == 0)
+			if(k == 0&&pic_num==1)
 				printf("\nExecuting Layer %d:\n", j+1);
 
 			// kernel memRd
-
-			if(k == 0)
+			if(k == 0&&pic_num==1)
 				printf("\nLaunching single work-item kernel winbuffer\n");
 
 			status = clEnqueueTask(que_memRd[i], knl_memRd[i], 0, NULL, &memRd_event[i]);
 			checkError(status, "Failed to launch kernel memRD kernel");
 
 			// kernel conv
-			if(k == 0)
+			if(k == 0&&pic_num==1)
 				printf("\nLaunching single work-item kernel Conv\n");
 
 			status = clEnqueueTask(que_conv[i], knl_conv[i], 0, NULL, &conv_event[i]);
@@ -912,7 +884,7 @@ int main(int argc, char** argv)
 			if(layer_config[j][pool_on]){
 				status = clEnqueueTask(que_pool[i], knl_pool[i], 0, NULL, &pool_event[i]);
 				checkError(status, "Failed to launch kernel pooling");
-				if(k == 0)
+				if(k == 0&&pic_num==1)
 					printf("\nLaunching single work-item kernel Pooling\n");
 			}
 
@@ -924,15 +896,14 @@ int main(int argc, char** argv)
 			knl_memWr_local_size[1] = 1;
 			knl_memWr_local_size[2] = LANE_NUM;
 
-			if(k == 0)
+			if(k == 0&&pic_num==1)
 				printf("\nLaunching kernel MemWr with local size: %d, %d, %d  (global size: %d, %d, %d)\n",
 									(int)knl_memWr_local_size[0], (int)knl_memWr_local_size[1], (int)knl_memWr_local_size[2],
 									(int)knl_memWr_global_size[0], (int)knl_memWr_global_size[1], (int)knl_memWr_global_size[2]);
 #ifdef XILINX
             status = clEnqueueTask(que_memWr[i], knl_memWr[i], 0, NULL, &memWr_event[i]);
-#else
-			status = clEnqueueNDRangeKernel(que_memWr[i], knl_memWr[i], 3, NULL,
-									knl_memWr_global_size, knl_memWr_local_size, 0, NULL, &memWr_event[i]);
+#else // IntelFPGA
+			status = clEnqueueNDRangeKernel(que_memWr[i], knl_memWr[i], 3, NULL, knl_memWr_global_size, knl_memWr_local_size, 0, NULL, &memWr_event[i]);
 #endif
 			checkError(status, "Failed to launch kernel memWr");
 
@@ -947,22 +918,25 @@ int main(int argc, char** argv)
 				knl_lrn_local_size[1] = 1;
 				knl_lrn_local_size[2] = layer_config[j][pool_z]/VEC_SIZE;
 
-				if(k == 0)
-					printf("\nLaunching kernel lrn with local size: %d, %d, %d  (global size: %d, %d, %d)\n",
-										(int)knl_lrn_local_size[0], (int)knl_lrn_local_size[1], (int)knl_lrn_local_size[2], (int)knl_lrn_global_size[0], (int)knl_lrn_global_size[1], (int)knl_lrn_global_size[2]);
+				if(k == 0&&pic_num==1)
+					printf("\nLaunching kernel lrn with local size: %d, %d, %d  (global size: %d, %d, %d)\n", (int)knl_lrn_local_size[0], (int)knl_lrn_local_size[1], (int)knl_lrn_local_size[2], (int)knl_lrn_global_size[0], (int)knl_lrn_global_size[1], (int)knl_lrn_global_size[2]);
 
-				status = clEnqueueNDRangeKernel(que_memWr[i], knl_lrn[i], 3, NULL,
-										knl_lrn_global_size, knl_lrn_local_size, 0, NULL, &lrn_event[i]);
+				status = clEnqueueNDRangeKernel(que_memWr[i], knl_lrn[i], 3, NULL, knl_lrn_global_size, knl_lrn_local_size, 0, NULL, &lrn_event[i]);
 				checkError(status, "Failed to launch kernel lrn");
 			}
 
 			// Wait for all kernel to finish
-			if(layer_config[j][lrn_on])
-				clWaitForEvents(num_devices, lrn_event);
-			else
-				clWaitForEvents(num_devices, memWr_event);
+			if(layer_config[j][lrn_on]){
+				status = clWaitForEvents(num_devices, lrn_event);
+				checkError(status, "Failed to finish lrn event");
+			}
+			else{
+				status = clWaitForEvents(num_devices, memWr_event);
+				checkError(status, "Failed to finish memWR event");
+			}
 
-
+#ifndef USE_OPENCV
+			// Profile mode, get excution time for each kernel
 			memRd_time[j] += getKernelStartEndTime(memRd_event[i]);
 			conv_time[j]  += getKernelStartEndTime(conv_event[i]);
 			if(layer_config[j][pool_on])
@@ -970,15 +944,88 @@ int main(int argc, char** argv)
 			memWr_time[j] += getKernelStartEndTime(memWr_event[i]);
 			if(layer_config[j][lrn_on])
 				lrn_time[j] += getKernelStartEndTime(lrn_event[i]);
+#endif
+
+			// Must release event object to avoid performance degeneration !!!
+			clReleaseEvent(memRd_event[i]);
+			checkError(status, "Failed to release memRD event object");
+			clReleaseEvent(conv_event[i]);
+			checkError(status, "Failed to release Conv event object");
+			clReleaseEvent(memWr_event[i]);
+			checkError(status, "Failed to release memWR event object");
+			if(layer_config[j][pool_on]){
+				status = clReleaseEvent(pool_event[i]);
+				checkError(status, "Failed to release pool event object");
+			}
+			if(layer_config[j][lrn_on]){
+				status = clReleaseEvent(lrn_event[i]);
+				checkError(status, "Failed to release lrn event object");
+			}
 
 			}// end of batch iteration
 
+
 		}// end of layer iteration
+
+		t.stop();
+		time = t.get_time_s();
+#ifdef USE_OPENCV
+		printf("Done! Inference time is %fs \n", time);
+#endif
+		readDataBack();
+		verifyResult(pic_num);
+
+#ifdef USE_OPENCV
+			getAccuracy(output_reorder,pic_num);
+			printf("\n\n");
+		}//end of picture iteration
+#endif
 
 	}// end of board iteration
 
 
+	//Recorde the end time
+	printf("\nPipeCNN exited !!!\n\n");
 
+
+#ifdef USE_OPENCV
+	printf("Total number of %d pictures have been processed.\n\n", PICTURE_NUM);
+
+	accuracy1=accuracy1/(PICTURE_NUM);
+	accuracy5=accuracy5/(PICTURE_NUM);
+	printf("Final Top-1 accuracy = %5.3f\n", accuracy1);
+	printf("Final Top-5 accuracy = %5.3f\n\n", accuracy5);
+#else
+	printf("\n-------------------\n");
+	printf("\nPerformance Summary\n\n");
+	float kernel_time = 0.0f;
+	float batch_float = float(input_config[batch_size]);
+	// bandwidth for each device
+	printf("Kernel runtime summary:\n");
+	for(unsigned j = 0; j < LAYER_NUM; ++j) {
+		printf("  Layer-%d:\n", j+1);
+		printf("    MemRd: %0.3f ms\n", double(memRd_time[j])/batch_float * 1e-6);
+		printf("    Conv : %0.3f ms\n", double(conv_time[j])/batch_float * 1e-6);
+		printf("    Pool : %0.3f ms\n", double(pool_time[j])/batch_float * 1e-6);
+		printf("    MemWr: %0.3f ms\n", double(memWr_time[j])/batch_float * 1e-6);
+		printf("    Lrn  : %0.3f ms\n", double(lrn_time[j])/batch_float * 1e-6);
+		kernel_time += conv_time[j];
+	}
+	printf("\nTotal kernel runtime %0.3f ms \n", double(kernel_time) * 1e-6);
+	printf("Batch size = %d, average process time per batch: %0.3f ms \n\n", input_config[batch_size], double(kernel_time/batch_float) * 1e-6);
+ 	printf("Total runtime: %fs \n\n", time);
+#endif
+	// Release resource
+	cleanup();
+
+	return EXIT_SUCCESS;
+}
+
+void readDataBack()
+{
+	unsigned int read_buf_size;
+	cl_int status;
+	scoped_array<cl_event> finish_event(num_devices);
 	// Read back the results from the device to verify the output
 	// Note：only device0 is used here
 	if(num_devices!=1)
@@ -1027,43 +1074,8 @@ int main(int argc, char** argv)
 
 	// Wait for reads to finish
 	clWaitForEvents(1, &finish_event[0]);
-
-	//Recorde the end time
-	t.stop();
-	float time = t.get_time_s();
-	printf("\nDone !!!\n\n");
-
-	// Evaluate the performance
-	// average bandwidth
-	//float bw_rd = DATA1_SIZE * sizeof(float) / (time * 1000000.0f);
-	//float bw_wr = (DATA1_SIZE+WEIGHT1_SIZE+BIAS1_SIZE) * sizeof(float) / (time * 1000000.0f);
-	//float throughput = (DATA1_SIZE*WEIGHT1_WH*WEIGHT1_WH*IMAGE_N) / (time * 1000000000.0f);
-	printf("\n-------------------\n");
-	printf("\nPerformance Summary\n\n");
-	printf("Total runtime: %fs \n\n", time);
-	//printf("Average mem read bandwidth: %f MBytes/s\n", bw_rd);
-	//printf("Average mem write bandwidth: %f MBytes/s\n", bw_wr);
-	//printf("Compute performance: %f GFLOPs/s\n", throughput);
-
-	float kernel_time = 0.0f;
-	float batch_float = float(input_config[batch_size]);
-	// bandwidth for each device
-	printf("Kernel runtime summary:\n");
-	for(unsigned j = 0; j < LAYER_NUM; ++j) {
-		printf("  Layer-%d:\n", j+1);
-		printf("    MemRd: %0.3f ms\n", double(memRd_time[j])/batch_float * 1e-6);
-		printf("    Conv : %0.3f ms\n", double(conv_time[j])/batch_float * 1e-6);
-		printf("    Pool : %0.3f ms\n", double(pool_time[j])/batch_float * 1e-6);
-		printf("    MemWr: %0.3f ms\n", double(memWr_time[j])/batch_float * 1e-6);
-		printf("    Lrn  : %0.3f ms\n", double(lrn_time[j])/batch_float * 1e-6);
-		kernel_time += conv_time[j];
-	}
-	printf("\nTotal kernel runtime %0.3f ms \n", double(kernel_time) * 1e-6);
-	printf("Batch size = %d, average process time per batch: %0.3f ms \n\n", input_config[batch_size], double(kernel_time/batch_float) * 1e-6);
-
-	// Validate the results
-	printf("Start verifying results ...\n");
-
+	clReleaseEvent(finish_event[0]);
+	checkError(status, "Failed to release finish event object");
 
 	if(LAYER_NUM>=CONV_NUM){  //Select with batch item you would like to verify from the last conv and all fc output
 		printf("Selected item = %d from the combined batch results in fc buffers\n", batch_item_num);
@@ -1080,15 +1092,36 @@ int main(int argc, char** argv)
 
 	// Reorder one item of the batch results into scalar format
 	reorderOutput(output_one_item, output_reorder, output_config[output_w], output_config[output_h], output_config[output_n]);
+}
 
-	#ifdef USE_OPENCV
+void verifyResult(int num)
+{
+
+#ifdef USE_OPENCV
+    int max_label;
+    char * substr;
 	softmax(output_reorder, output_one_item);
-	display(output_one_item);
+	max_label = getProb(output_one_item);
 	// Show the picture
+    substr = &synset_buf[max_label][10];
+
 	Mat img = imread(picture_file_path);
+    putText(img,substr,Point(20, 50), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(255, 255, 0), 2, 8);
+    if(max_label == label[num-1]){
+        putText(img,"True",Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, 8);
+    } else {
+        putText(img,"False",Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 255), 2, 8);
+        printf("False: True_label = %d Inferred_label = %d\n\n", label[num], max_label);
+    }
     imshow( "PipeCNN", img);
-    waitKey(0);
-	#else
+	cvMoveWindow("PipeCNN",0,0);//set the window's position
+    waitKey(600);
+#else
+	// Validate the results
+	printf("\nStart verifying results ...\n");
+	unsigned int err_num;
+	float std_err;  // standard errors
+	unsigned int batch_item_size;
 	// Compare each results with the golden reference data
 	batch_item_size = output_config[output_w]*output_config[output_h]*output_config[output_n];
 	err_num = 0;
@@ -1105,65 +1138,84 @@ int main(int argc, char** argv)
 	else{
 		printf("\nCheck Pass !!!\n");
 		softmax(output_reorder, output_one_item);
-		display(output_one_item);
+		getProb(output_one_item);
 	}
 	// Dump results and golden_ref for debugging
 	dumpResult();
-	#endif
-
-	// Release resource
-	cleanup();
-
-	return EXIT_SUCCESS;
+#endif
 }
 
+void loadImageToBuffer(int num)
+{
+	cl_int status;
+	ifstream bin_file_r;
+
+	// Image
 #ifdef USE_OPENCV
-// Load image from files
-int load_picture(DTYPE *image){
+	// load image from picture files
+	// get the correct paths for each pictures
+	char end[14]="00000000.JPEG";//endof the char[] '\0'
+	char head[100];
+	numtochar(num,end);
+	memset(picture_file_path,0x00,sizeof(char)*100);
+	strcpy(head,picture_file_path_head);
+	strcpy(picture_file_path,strcat(head,end));
 
-		float *mean_data;
+	if(load_picture(image)==1)
+		printf("Error: loading image data from real pictures failed !!!\n");
+#else
+	unsigned file_size;
+	// load image from binary files
+	bin_file_r.open(input_file_path, ios::in | ios::binary);
 
-		printf("\nLoading picture %s .....\n\n", picture_file_path);
+    if(bin_file_r.is_open())
+    {
+		//Get file size
+		bin_file_r.seekg(0, bin_file_r.end);
+		file_size = bin_file_r.tellg();
+		bin_file_r.seekg(0, bin_file_r.beg);
 
-		// load ILSVRC2012 database mean data
-		mean_data = (float *) malloc(sizeof(float)*MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT*MEAN_DATA_CHANNEl);
-		if(mean_data == NULL){
-			printf("Error: allocating memory for images failed !!!\n");
-			return 1;
-		}
+    	bin_file_r.read((char *)image, sizeof(DTYPE)*IMAGE_FILE_SIZE);
+    	printf("\n%d bytes image data read from binary files\n", file_size);
+		if(IMAGE_FILE_SIZE!=(file_size/(sizeof(DTYPE))))
+			printf("Warning: image file size does not match user configuration !!!\n");
+    	bin_file_r.close();
+    }
+    else
+		printf("Image file does not exits !!!\n");
+#endif
 
-		FILE *p_mean_data=fopen(mean_data_file_path,"rb");
-		fread(mean_data,sizeof(float),MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT*MEAN_DATA_CHANNEl,p_mean_data);
-
-		// load picture from files
-		Mat img = imread(picture_file_path);
-		// resize pic to MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT, and substract with mean data
-		Mat img1;
-		resize(img,img1,Size(MEAN_DATA_WIDTH,MEAN_DATA_HEIGHT));
-		img1.convertTo(img1,CV_32FC3);
-		Mat mean_mat(MEAN_DATA_WIDTH, MEAN_DATA_HEIGHT, CV_32FC3, mean_data);
-		img1 = img1 - mean_mat;
-		// resize to the input size of the first layer
-		Mat img2;
-		resize(img1,img2,Size(layer_config_original[0][data_w],layer_config_original[0][data_h]));
-		// convert to 8-bit fixed-point
-		img2.convertTo(img2,CV_8SC3);
-		// reorder channel sequence from RGB to GBR
-		DTYPE * data_ptr = (DTYPE*)img2.data;
-		unsigned int w,h,c;
-		unsigned int k=0;
-		for(h=0;h<layer_config_original[0][data_h];h++){
-			for(w=0;w<layer_config_original[0][data_w];w++){
-				for (c=0;c<layer_config_original[0][data_n];c++){
-					 image[c*layer_config_original[0][data_w]*layer_config_original[0][data_h]+h*layer_config_original[0][data_w]+w]=data_ptr[k];
-					 k++;
+	// Vectorize the input image by a factor of VEC_SIZE
+	for(unsigned n = 0; n<layer_config[0][data_n]/VEC_SIZE; n++){
+		for(unsigned i = 0; i<layer_config[0][data_h]; i++){
+			for(unsigned j = 0; j<layer_config[0][data_w]; j++){
+				for(unsigned k = 0; k<VEC_SIZE; k++){
+					if((n*VEC_SIZE+k)<layer_config_original[0][data_n]){ //  when layer_config[0][data_n] > layer_config_original[0][data_n], only copy valid pixels
+						data_init[n*VEC_SIZE*layer_config[0][data_h]*layer_config[0][data_w] + i*layer_config[0][data_w]*VEC_SIZE + j*VEC_SIZE + k]
+							= (DTYPE) image[(n*VEC_SIZE+k)*layer_config[0][data_h]*layer_config[0][data_w] + i*layer_config[0][data_w] + j];
+					}
 				}
 			}
 		}
-		fclose(p_mean_data);
-		return 0;
-}
+	}
+
+	for(unsigned i = 0; i < num_devices; ++i) {
+		// Create data buffers for each batch item
+		for(unsigned j = 0; j < input_config[batch_size]; ++j){
+#if defined(USE_SDX_1DDR)
+			clEnqueueMigrateMemObjects(que_memRd[i],1, &data_buf[i*input_config[batch_size]+j], 0 /* flags, 0 means from host*/,0, NULL,&write_event[i]);
+#elif defined(USE_SDX_4DDR)
+			// Load image data into buffers
+			status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE, 0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
+			checkError(status, "Failed to transfer input image");
+#else
+			// Load image data into buffers
+			status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE, 0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
+			checkError(status, "Failed to transfer input image");
 #endif
+		}
+	}
+}
 
 // Read all input data and golden ref data
 int prepare()
@@ -1356,42 +1408,37 @@ int prepare()
     else
     	printf("Weights file does not exits !!!\n");
 
-    // Image
-	#ifdef USE_OPENCV
-	// load image from picture files
-	if(load_picture(image)==1)
-		printf("Error: loading image data from real pictures failed !!!\n");
-	#else
-	// load image from binary files
-	bin_file_r.open(input_file_path, ios::in | ios::binary);
-
-    if(bin_file_r.is_open())
-    {
-		//Get file size
-		bin_file_r.seekg(0, bin_file_r.end);
-		file_size = bin_file_r.tellg();
-		bin_file_r.seekg(0, bin_file_r.beg);
-
-    	bin_file_r.read((char *)image, sizeof(DTYPE)*IMAGE_FILE_SIZE);
-    	printf("%d bytes image read \n", file_size);
-		if(IMAGE_FILE_SIZE!=(file_size/(sizeof(DTYPE))))
-			printf("Warning: image file size does not match user configuration !!!\n");
-    	bin_file_r.close();
-    }
-    else
-    	printf("Image file does not exits !!!\n");
-	#endif
-
 	// Synset_words
      int nn=0;
 	 FILE *fp=fopen(synset_word_file_path,"r");
+	 if(!fp)
+	 {
+		 printf("Synset word file does not exits !!!\n");
+		 return 1;
+	 }
 	 while (!feof(fp)){
         fgets(synset_buf[nn], 1024, fp);
         nn++;
     }
     fclose(fp);
 
-
+#ifdef USE_OPENCV
+	// label
+	nn=0;
+	fp=fopen(LabelPath,"r");
+	if(!fp)
+	{
+		 printf("Label file does not exits !!!\n");
+		 return 1;
+	 }
+	while (!feof(fp)&&nn<PICTURE_NUM){
+		 //printf("read%d......\n",nn);
+        fgets(label_buf[nn], 1024, fp);
+        nn++;
+    }
+	fclose(fp);
+	labelNum();
+#endif
     // golden_output
 	bin_file_r.open(ref_file_path, ios::in | ios::binary);
 
@@ -1410,20 +1457,6 @@ int prepare()
     }
     else
     	printf("Golden file does not exits !!!\n");
-
-	// Vectorize the input image by a factor of VEC_SIZE
-	for(unsigned n = 0; n<layer_config[0][data_n]/VEC_SIZE; n++){
-		for(unsigned i = 0; i<layer_config[0][data_h]; i++){
-			for(unsigned j = 0; j<layer_config[0][data_w]; j++){
-				for(unsigned k = 0; k<VEC_SIZE; k++){
-					if((n*VEC_SIZE+k)<layer_config_original[0][data_n]){ //  when layer_config[0][data_n] > layer_config_original[0][data_n], only copy valid pixels
-						data_init[n*VEC_SIZE*layer_config[0][data_h]*layer_config[0][data_w] + i*layer_config[0][data_w]*VEC_SIZE + j*VEC_SIZE + k]
-							= (DTYPE) image[(n*VEC_SIZE+k)*layer_config[0][data_h]*layer_config[0][data_w] + i*layer_config[0][data_w] + j];
-					}
-				}
-			}
-		}
-	}
 
 	// Layer-1
 	reorderWeights(weights, weight_conv[0], layer_config[0][weight_w], layer_config[0][weight_h], layer_config[0][weight_n], layer_config[0][weight_m], layer_config_original[0][weight_n], layer_config_original[0][weight_m], ptr, padding_offset[0], VEC_SIZE, LANE_NUM);
@@ -1448,7 +1481,6 @@ int prepare()
 
 	return 0;
 }
-
 
 void reorderWeights(DTYPE *weights, DTYPE *weight_buf, unsigned dim1, unsigned dim2, unsigned dim3, unsigned dim4, unsigned dim3_original, unsigned dim4_original, unsigned offset, unsigned padding_offset, unsigned vecSize, unsigned laneNum){
 
@@ -1594,7 +1626,7 @@ void softmax(DTYPE *output_reorder , DTYPE *output)
 	 }
 }
 
-void display(DTYPE *output)
+int getProb(DTYPE *output)
 {
     int m=0;
     float max=output[0];
@@ -1613,6 +1645,8 @@ void display(DTYPE *output)
     synset_buf[m][ii-1]= 32;
 
 	printf("\nThe inference result is %s (the prob is %5.2f) \n\n", synset_buf[m], max);
+
+	return m;
 
 }
 
@@ -1637,6 +1671,141 @@ void dumpResult(){
 	result_file.close();
 }
 
+#ifdef USE_OPENCV
+// Load image from files
+int load_picture(DTYPE *image){
+
+		float *mean_data;
+
+		printf("\nLoading picture %s .....\n\n", picture_file_path);
+
+		// load ILSVRC2012 database mean data
+		mean_data = (float *) malloc(sizeof(float)*MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT*MEAN_DATA_CHANNEl);
+		if(mean_data == NULL){
+			printf("Error: allocating memory for images failed !!!\n");
+			return 1;
+		}
+
+		FILE *p_mean_data=fopen(mean_data_file_path,"rb");
+		fread(mean_data,sizeof(float),MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT*MEAN_DATA_CHANNEl,p_mean_data);
+
+		// load picture from files
+		Mat img = imread(picture_file_path);
+		// resize pic to MEAN_DATA_WIDTH*MEAN_DATA_HEIGHT, and substract with mean data
+		Mat img1;
+		resize(img,img1,Size(MEAN_DATA_WIDTH,MEAN_DATA_HEIGHT));
+		img1.convertTo(img1,CV_32FC3);
+		Mat mean_mat(MEAN_DATA_WIDTH, MEAN_DATA_HEIGHT, CV_32FC3, mean_data);
+		img1 = img1 - mean_mat;
+		// resize to the input size of the first layer
+		Mat img2;
+		resize(img1,img2,Size(layer_config_original[0][data_w],layer_config_original[0][data_h]));
+		// convert to 8-bit fixed-point
+		img2.convertTo(img2,CV_8SC3);
+		// reorder channel sequence from RGB to GBR
+		DTYPE * data_ptr = (DTYPE*)img2.data;
+		unsigned int w,h,c;
+		unsigned int k=0;
+		for(h=0;h<layer_config_original[0][data_h];h++){
+			for(w=0;w<layer_config_original[0][data_w];w++){
+				for (c=0;c<layer_config_original[0][data_n];c++){
+					 image[c*layer_config_original[0][data_w]*layer_config_original[0][data_h]+h*layer_config_original[0][data_w]+w]=data_ptr[k];
+					 k++;
+				}
+			}
+		}
+		fclose(p_mean_data);
+		return 0;
+}
+
+void labelNum()
+{
+	int i,num;
+	char *p;
+	for(i=0;i<PICTURE_NUM;i++)
+	{
+		num=0;
+		p=label_buf[i];
+		while(*p!='\0')
+		{
+			if(*p==' ')
+			{
+				p++;
+				break;
+			}
+			p++;
+		}
+		while(*p!='\n')
+		{
+			num=num*10+(*p-'0');
+			p++;
+		}
+		label[i]=num;
+	}
+}
+
+void numtochar(int num,char *end)
+{
+	int counter=0;
+	while(num>0)
+	{
+		end[7-counter]='0'+num%10;
+		num/=10;
+		counter++;
+	}
+
+}
+
+void strcopy(DTYPE *str1,DTYPE *str2)
+{
+	for(unsigned int i=0;i<output_config[output_n];i++)
+	{
+		str1[i]=str2[i];
+	}
+}
+//Top-k Accuracy
+void getAccuracy(DTYPE *output_reorder,int num)
+{
+	strcopy(searchTop,output_reorder);
+	int predictionTop5[5],max;
+	float data_max;
+	unsigned int i,k;
+	float tmp_accuracy1,tmp_accuracy5;
+	num=num-1;//label[] begin from 0
+	for(k=0;k<5;k++)
+	{
+		data_max=searchTop[0];
+		max=0;
+		for(i=0;i<output_config[output_n];i++)
+		{
+		  if(data_max<searchTop[i])
+		  {
+			data_max=searchTop[i];
+			max=i;
+		  }
+		}
+		predictionTop5[k]=max;
+		searchTop[max]=-1;//min
+	}
+	//top-k
+	for(i=0;i<5;i++)
+	{
+		if(predictionTop5[i]==label[num])
+		{
+			accuracy5++;
+			if(i==0)
+				accuracy1++;
+			break;
+		}
+	}
+	tmp_accuracy1=accuracy1/(num+1);
+	tmp_accuracy5=accuracy5/(num+1);
+
+	printf("Current Top-1 accuracy = %5.3f\n", tmp_accuracy1);
+	printf("Current Top-5 accuracy = %5.3f\n", tmp_accuracy5);
+
+}
+#endif
 
 // Release all memory resources here
 void cleanup()
