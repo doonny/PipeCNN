@@ -223,7 +223,7 @@ However, it is always recommanded to use the IDE enviroment rather than makefile
 * LANE_NUM
 * CONV_GP_SIZE_X
 
-to appropriate ones. The default setting is VEC_SIZE=8, LANE_NUM=16, CONV_GP_SIZE_X=7 which achieves the shortest classification time on the DE5-net board.
+to appropriate ones. The default setting is VEC_SIZE=8, LANE_NUM=16, CONV_GP_SIZE_X=7 which achieves the shortest classification time on the DE5-net board. To obtain the optimal results (best performance or smallest cost), you need to perform design space explorations by implementing PipeCNN with different configurations of the three parameters, and find the one as you needed. Please refer to our acdamic papers for more detailed information.
 
 **SW Configuration.** Configuration of different CNN models is done by a header file located in *host/layer_config.h*. Select one of the model configurations provided and recompile the host before running the test. Currently, the following models have been tested:
 * AlexNet (CaffeNet)
