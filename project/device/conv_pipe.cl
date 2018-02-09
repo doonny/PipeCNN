@@ -202,7 +202,6 @@ void memRead(
 	gp_num_y = 0;
 	out_idx_z = 0;
 	
-	#pragma ivdep array(weight_buffer)
 	Group:for(unsigned int out_idx_xyz=0; out_idx_xyz<(weight_dim4_div_lane*group_num_y*group_num_x); out_idx_xyz++){
 
 		// special case when split==1, the output feature maps depend on only half the input feature maps
@@ -234,6 +233,7 @@ void memRead(
 					item_loop_bound = (weight_dim1x2x3*CONV_GP_SIZE_Y*CONV_GP_SIZE_X/VEC_SIZE);
 				}
 
+				#pragma ivdep array(win_buffer)
 				#pragma ivdep array(weight_buffer)
 				Item:for(unsigned int  win_itm_xyz=0; win_itm_xyz<item_loop_bound; win_itm_xyz++){
 
