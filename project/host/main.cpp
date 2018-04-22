@@ -1648,6 +1648,7 @@ int load_picture(DTYPE *image){
 			}
 		}
 		fclose(p_mean_data);
+		free(mean_data);
 		return 0;
 }
 
