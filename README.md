@@ -24,8 +24,7 @@ Currently, we are using [Intel's OpenCL SDK](https://www.intel.com/content/www/u
 * Terasic's [DE5-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=179&No=727) (Stratix-V A7 FPGA)
 * Terasic's [DE10-standard](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=180&No=1105) (Cyclone-V SXC6 FPGA)
 
-
-For Xilinx FPGAs, our dev boards were no supported by the latest OpenCL tool chain, so there is guarantee the code could be successfully compiled.
+For Xilinx FPGAs, our dev boards were no longer supported by the latest SDAccel tool, so there is no guarantee that the code could be successfully compiled.
 
 ## Demos
 Now you can run classification on the ImageNet dataset by using PipeCNN, and measure the top-1/5 accuracy for different CNN models.
@@ -37,7 +36,7 @@ The following piture shows that the demo runs on our own computer with the DE5-n
 ![DE5-net-Demo](documents/Demo-DE5-net.gif)
 
 ## Performances
-It's been four years since the release of the this project. Deep Learning Architecture (DLA) is constantly evolving, and lots of new techniques have been invented to improve the efficiency of DLA. The performance of PipeCNN is no longer comparable to the state-of-the-art designs. Therefore, the current goal of this project is to provide students a complete design that can be used to learn DLA and try out new ideas. 
+It's been four years since the release of the this project. Deep Learning Architecture (DLA) is constantly evolving, and lots of new techniques have been invented to improve the efficiency of DLA. The performance of PipeCNN is no longer comparable to the state-of-the-art designs. Therefore, the current goal of this project is to provide a complete design that can be used to learn DLA and try out new ideas. 
 
 This following table lists the performance and cost information on some of the boards we used as a reference. For each FPGA device, one needs to perform design space exploration (with hardware parameters VEC_SIZE, LANE_NUM and CONV_GP_SIZE_X) to find the optimal design that maximizes the throughput or minimizes the excution time. Suggested hardware parameters for the above boards are summarized [here](https://github.com/doonny/PipeCNN/tree/master/documents). Since we are constantly optimzing the design and updating the codes, the performance data in the following table might be out-dated, and please use the latest version to get the exect data. We welcome other vendors/researches to provide the latest performance and cost information on other FPGA platforms/boards.
 
@@ -53,16 +52,16 @@ This following table lists the performance and cost information on some of the b
 * Implementation of Faster-RCNN and YOLO9000.
 
 ## Citation
-Please kindly cite our work of PipeCNN if it helps your research:
+Please kindly cite our work of PipeCNN if it helped your research:
 ```
 Dong Wang, Ke Xu and Diankun Jiang, “PipeCNN: An OpenCL-Based Open-Source FPGA Accelerator for Convolution Neural Networks”, FPT 2017.
 ```
 
 ## Contributors
 
-The following students have contributed to this  projects:
+The following people have also contributed to this project:
 
-Diankun Jiang, Ke Xu, Qun Jia, Jianjing An, Xiaoyun Wang, Shihang Fu, Zhihong Bai.
+Diankun Jiang, [Ke Xu](https://github.com/xuke225), Qun Jia, Jianjing An, Xiaoyun Wang, Shihang Fu, Zhihong Bai.
 
 ## Related Works
 There are other FPGA accelerators that also adopt HLS-based design scheme. Some brilliant works are listed as follow. Note that PipeCNN is the first, and only one that is Open-Source （￣︶￣）↗
