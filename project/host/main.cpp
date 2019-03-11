@@ -36,10 +36,11 @@ using namespace std;
 using namespace ocl_util;
 
 typedef  signed char  DTYPE;
+typedef  float FTYPE;
 
 #ifdef XILINX
 //#define USE_SDX_1DDR  // reserved for v7-690T device, DO NOT USE
-//#define USE_SDX_4DDR  // reverved for 4-bank DDR BSP, DO NOT USE
+//#define USE_SDX_4DDR  // reserved for v7-690T device, DO NOT USE
 #endif
 
 //----------- Design Parameters --------------//
@@ -48,16 +49,18 @@ typedef  signed char  DTYPE;
 const char *vendor_name = "Xilinx";
 #else
 const char *vendor_name = "Intel";
+//const char *vendor_name = "Altera";
 #endif
 #define DEVICE_TYPE CL_DEVICE_TYPE_ACCELERATOR
 
 // SW System parameters
 #define DMA_ALIGNMENT   64
-#define MAX_LAYER_NUM   16
+#define MAX_LAYER_NUM   54
 #define MAX_BATCH_SIZE  16
 
-#define IN_BUF_SIZE    256*256*64  // Note: the buffer size should be large enough to hold all temperary results
-#define OUT_BUF_SIZE   256*256*64
+#define IN_BUF_SIZE    256*256*128  // Note: the buffer size should be large enough to hold all temperary results
+#define OUT_BUF_SIZE   256*256*128
+#define POOL_BUF_SIZE  256*256*128
 #define FC_BUF_SIZE    32768*MAX_BATCH_SIZE
 
 #define MEAN_DATA_WIDTH   256
@@ -67,7 +70,7 @@ const char *vendor_name = "Intel";
 #define MAX_PIC_NUM 50000
 const char *mean_data_file_path    = "./data/imagenet/mean_data.dat";
 const char *synset_word_file_path  = "./data/imagenet/synset_words.txt";
-const char *LabelPath		       = "./data/imagenet/val.txt";
+const char *LabelPath              = "./data/imagenet/val.txt";
 char  picture_file_path_head[100]  = "/home/dwang/Work/imagenet/ilsvrc2012/ILSVRC2012_img_val/ILSVRC2012_val_";
 char  picture_file_path[100];
 int   label[MAX_PIC_NUM]={0};
@@ -77,22 +80,22 @@ DTYPE searchTop[1024];
 float accuracy1=0;
 float accuracy5=0;
 
-
+#ifdef ALEXNET
 // AlexNet
 // Original problem size
-// File size is in num of DTYPE numbers
+// File size is in num of DTYPE numbers 
 #define IMAGE_FILE_SIZE   (227*227*3)
 //#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
 #define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
-#define LAYER_NUM         8
+#define LAYER_NUM         8//8
 #define CONV_NUM          5
 const char *weight_file_path = "./data/data_alex/weights.dat";
 const char *input_file_path = "./data/data_alex/image.dat";
 const char *ref_file_path = "./data/data_alex/fc8.dat";
 const char *dump_file_path = "./result_dump.txt";
+#endif
 
-
-/*
+#ifdef VGG16
 // VGG16
 // Original problem size
 // File size is in num of DTYPE numbers
@@ -105,7 +108,37 @@ const char *weight_file_path = "./data/data_vgg/weights.dat";
 const char *input_file_path = "./data/data_vgg/image.dat";
 const char *ref_file_path = "./data/data_vgg/fc8.dat";
 const char *dump_file_path = "./result_dump.txt";
-*/
+#endif 
+
+#ifdef RESNET
+// ResNet
+// Original problem size
+// File size is in num of DTYPE numbers
+#define IMAGE_FILE_SIZE		(224*224*3)
+#define WEIGHTS_FILE_SIZE	25579648
+#define MEAN_FILE_SIZE 		26560
+#define VAR_FILE_SIZE		26560
+#define ALPHA_FILE_SIZE		26560
+#define BETA_FILE_SIZE		26560
+//#define LAYER_NUM         	54
+#define LAYER_NUM         	54
+#define CONV_NUM         	53
+const char *weight_file_path = "./data/data_resnet/weights_qt.data";
+const char *mean_file_path = "./data/data_resnet/mean.data";
+const char *var_file_path = "./data/data_resnet/var.data";
+const char *alpha_file_path = "./data/data_resnet/alpha.data";
+const char *beta_file_path = "./data/data_resnet/beta.data";
+const char *input_file_path = "./data/data_resnet/image.data";
+const char *ref_file_path = "./data/data_resnet/fc1024.data";
+const char *dump_file_path = "./result_dump.txt";
+#endif
+//ResNet maxpool need padding
+#ifdef RESNET
+#define MAXPOOL_PAD 1
+#else
+#define MAXPOOL_PAD 0
+#endif
+
 
 // Configuration file instructions
 enum config_item{
@@ -113,7 +146,7 @@ layer_type, // "0" -> conv, "1" -> fc
 
 data_w, data_h, data_n, weight_w, weight_h, weight_n, weight_m, bias_size, //memRd Parameters
 
-memrd_src, //"0"-> data_buf  "1"-> output_buf  "2"->"fc_1_buffer"  "3"->"fc_2_buffer"
+memrd_src, //"0"-> data_buf  "1"-> output_buf  "2"->"fc_1_buffer"  "3"->"fc_2_buffer"  "4"->"pool_buffer" "5"->"eltwise_buf"(resnet)
 
 conv_x, conv_y, conv_z, conv_stride, conv_padding, conv_split, conv_relu, //Conv Parameters
 
@@ -144,6 +177,14 @@ enum precision_item{
 frac_w, frac_din, frac_dout
 
 };
+#ifdef RESNET
+enum eltwise_item{
+eltwise_on,eltwise_in_1,eltwise_in_2,eltwise_out
+};
+enum addition_precision_item{
+bn_dout,elt_din1,elt_din2,elt_dout
+};
+#endif
 
 
 // Define the kernel names used
@@ -152,6 +193,10 @@ const char *knl_name_conv  = "coreConv";
 const char *knl_name_Pool  = "maxPool";
 const char *knl_name_memWr = "memWrite";
 const char *knl_name_lrn   = "lrn";
+#ifdef RESNET
+const char *knl_name_bn   = "batchNorm";
+const char *knl_name_elt   = "eltwise";
+#endif
 
 
 //------------ Global Functions & Variables ------------//
@@ -169,12 +214,24 @@ scoped_array<cl_command_queue> que_memRd;
 scoped_array<cl_command_queue> que_conv;
 scoped_array<cl_command_queue> que_memWr;
 scoped_array<cl_command_queue> que_pool;
+scoped_array<cl_command_queue> que_lrn;
 scoped_array<cl_mem> data_buf;
 scoped_array<cl_mem> output_buf;
+scoped_array<cl_mem> pool_buf;
 scoped_array<cl_mem> weights_buf;
 scoped_array<cl_mem> bias_buf;
 scoped_array<cl_mem> fc_1_buf;
 scoped_array<cl_mem> fc_2_buf;
+#ifdef RESNET
+scoped_array<cl_kernel> knl_bn;
+scoped_array<cl_command_queue> que_bn;
+scoped_array<cl_kernel> knl_elt;
+scoped_array<cl_mem> mean_buf;
+scoped_array<cl_mem> var_buf;
+scoped_array<cl_mem> alpha_buf;
+scoped_array<cl_mem> beta_buf;
+scoped_array<cl_mem> eltwise_buf;
+#endif
 
 #ifdef XILINX
 	scoped_array<cl_event> write_event(num_devices);
@@ -191,7 +248,16 @@ DTYPE *output;
 DTYPE *output_one_item;
 DTYPE *output_reorder;
 DTYPE *golden_ref;
-
+#ifdef RESNET
+FTYPE *means;
+FTYPE *var;
+FTYPE *alpha;
+FTYPE *beta;
+FTYPE *mean_conv[MAX_LAYER_NUM];
+FTYPE *var_conv[MAX_LAYER_NUM];
+FTYPE *alpha_conv[MAX_LAYER_NUM];
+FTYPE *beta_conv[MAX_LAYER_NUM];
+#endif
 unsigned layer_config_original[LAYER_NUM][NUM_CONFIG_ITEM];
 
 #ifdef USE_OPENCV
@@ -199,6 +265,9 @@ int  load_picture(DTYPE *image);
 void getAccuracy(DTYPE *output_reorder,int num);
 void labelNum();
 void numtochar(int num,char *end);
+#endif
+#ifdef RESNET
+void reorderMVAB(FTYPE *dataIn, FTYPE *dataout, unsigned offset, unsigned padding_offset, unsigned dim4, unsigned dim4_original, unsigned laneNum);
 #endif
 void loadImageToBuffer(int num);
 int  prepare();
@@ -221,9 +290,8 @@ int main(int argc, char** argv)
 	unsigned int conv_output_num;
 	unsigned int conv_loop_cnt;
 	unsigned int conv_control;
-	unsigned int pool_input_num;
-	unsigned int pool_line_size;
-	unsigned char pool_bypass;
+	unsigned short conv_xy;
+	unsigned short pool_dim1x2;
 	unsigned char batch_size_in_dim;
 	unsigned char batch_indx_dim1;
 	unsigned char batch_indx_dim2;
@@ -281,6 +349,7 @@ int main(int argc, char** argv)
 	que_conv.reset(num_devices);
 	que_memWr.reset(num_devices);
 	que_pool.reset(num_devices);
+	que_lrn.reset(num_devices);
 	knl_memRd.reset(num_devices);
 	knl_conv.reset(num_devices);
 	knl_memWr.reset(num_devices);
@@ -292,11 +361,20 @@ int main(int argc, char** argv)
 	// Two buffers (data and output) are used as ping-pong buffers for conv layers
 	data_buf.reset(num_devices*MAX_BATCH_SIZE);
 	output_buf.reset(num_devices*MAX_BATCH_SIZE);
+	pool_buf.reset(num_devices*MAX_BATCH_SIZE);
 	// Two buffers are used as ping-pong buffers for fc layers
 	fc_1_buf.reset(num_devices);
 	fc_2_buf.reset(num_devices);
-
-
+#ifdef RESNET
+	knl_bn.reset(num_devices);
+	que_bn.reset(num_devices);
+	knl_elt.reset(num_devices);
+	mean_buf.reset(num_devices*CONV_NUM);
+	var_buf.reset(num_devices*CONV_NUM);
+	alpha_buf.reset(num_devices*CONV_NUM);
+	beta_buf.reset(num_devices*CONV_NUM);
+	eltwise_buf.reset(num_devices*MAX_BATCH_SIZE);
+#endif
 	// Prepare compute data
 	status = prepare();
 	if(status == 1){
@@ -315,6 +393,9 @@ int main(int argc, char** argv)
 		checkError(status, "Failed to create command queue 2");
 		que_pool[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
 		checkError(status, "Failed to create command queue 3");
+		que_lrn[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+		checkError(status, "Failed to create command queue 3");
+
 
 		// Kernel
 		knl_memRd[i] = clCreateKernel(program, knl_name_memRd, &status);
@@ -331,12 +412,20 @@ int main(int argc, char** argv)
 
 		knl_lrn[i] = clCreateKernel(program, knl_name_lrn, &status);
 		checkError(status, "Failed to create lrn kernel");
+#ifdef RESNET
+		que_bn[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+		checkError(status, "Failed to create command queue 4");
+		knl_bn[i] = clCreateKernel(program, knl_name_bn, &status);
+		checkError(status, "Failed to create bn kernel");
+		knl_elt[i] = clCreateKernel(program, knl_name_elt, &status);
+		checkError(status, "Failed to create elt kernel");
+#endif
 
 		// Mems
 		// Create weight and bias buffers for each layer
 		for(unsigned j = 0; j < LAYER_NUM; ++j){
 
-		    weight_buf_size = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m];
+			weight_buf_size = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]*layer_config[j][weight_m];
 #if defined(USE_SDX_1DDR)
 			// Weights buffers for each layer
 			weights_buf[i*LAYER_NUM+j] = clCreateBuffer(context,CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,weight_buf_size* sizeof(DTYPE),weight_conv[j],&status);
@@ -388,6 +477,32 @@ int main(int argc, char** argv)
 			checkError(status, "Failed to transfer bias");
 #endif
 		}
+		
+		// Wait for all data are send to FPGA
+		clFinish(que_memRd[0]);
+		
+#ifdef RESNET
+		for(unsigned j = 0; j <CONV_NUM&&j<LAYER_NUM; ++j){
+			mean_buf[i*CONV_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, layer_config[j][bias_size] * sizeof(FTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for mean in layer");
+			var_buf[i*CONV_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, layer_config[j][bias_size] * sizeof(FTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for var in layer");
+			alpha_buf[i*CONV_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, layer_config[j][bias_size] * sizeof(FTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for alpha in layer");
+			beta_buf[i*CONV_NUM+j] = clCreateBuffer(context, CL_MEM_READ_ONLY, layer_config[j][bias_size] * sizeof(FTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for beta in layer");
+			status = clEnqueueWriteBuffer(que_bn[i], mean_buf[i*CONV_NUM+j], CL_TRUE, 0, layer_config[j][bias_size] * sizeof(FTYPE), mean_conv[j], 0, NULL, NULL);
+			checkError(status, "Failed to transfer mean");
+			status = clEnqueueWriteBuffer(que_bn[i], var_buf[i*CONV_NUM+j], CL_TRUE, 0, layer_config[j][bias_size] * sizeof(FTYPE), var_conv[j], 0, NULL, NULL);
+			checkError(status, "Failed to transfer var");
+			status = clEnqueueWriteBuffer(que_bn[i], alpha_buf[i*CONV_NUM+j], CL_TRUE, 0, layer_config[j][bias_size] * sizeof(FTYPE), alpha_conv[j], 0, NULL, NULL);
+			checkError(status, "Failed to transfer alpha");
+			status = clEnqueueWriteBuffer(que_bn[i], beta_buf[i*CONV_NUM+j], CL_TRUE, 0, layer_config[j][bias_size] * sizeof(FTYPE), beta_conv[j], 0, NULL, NULL);
+			checkError(status, "Failed to transfer beta");
+		}
+		// Wait for all data are send to FPGA
+		clFinish(que_bn[0]);
+#endif
 
 		// Create data buffers for each batch item
 		for(unsigned j = 0; j < input_config[batch_size]; ++j){
@@ -425,7 +540,18 @@ int main(int argc, char** argv)
 			// Output results buffers
 			output_buf[i*input_config[batch_size]+j] = clCreateBuffer(context, CL_MEM_READ_WRITE, OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
 			checkError(status, "Failed to create buffer for output");
-
+			
+			// pool_buffer
+			pool_buf[i*input_config[batch_size]+j] = clCreateBuffer(context, CL_MEM_READ_WRITE, POOL_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for pool_buffer");
+#ifdef RESNET
+			eltwise_buf[i*input_config[batch_size]+j] = clCreateBuffer(context, CL_MEM_READ_WRITE, OUT_BUF_SIZE * sizeof(DTYPE), NULL, &status);
+			checkError(status, "Failed to create buffer for eltwise_buf");
+#endif
+			//// Load image data into buffers
+			//status = clEnqueueWriteBuffer(que_memRd[i], data_buf[i*input_config[batch_size]+j], CL_TRUE,
+			//	0, (layer_config[0][data_w]*layer_config[0][data_h]*layer_config[0][data_n]) * sizeof(DTYPE), data_init, 0, NULL, NULL);
+			//checkError(status, "Failed to transfer input image");
 #endif
 		}
 #ifdef USE_SDX_4DDR
@@ -458,6 +584,10 @@ int main(int argc, char** argv)
 	scoped_array<cl_event> pool_event(num_devices);
 	scoped_array<cl_event> memWr_event(num_devices);
 	scoped_array<cl_event> lrn_event(num_devices);
+#ifdef RESNET
+	scoped_array<cl_event> bn_event(num_devices);
+	scoped_array<cl_event> elt_event(num_devices);
+#endif
 
 	// Recorde the excution time of each operation for each layer
 #ifndef USE_OPENCV
@@ -466,12 +596,27 @@ int main(int argc, char** argv)
 	cl_ulong pool_time[LAYER_NUM];
 	cl_ulong memRd_time[LAYER_NUM];
 	cl_ulong lrn_time[LAYER_NUM];
+#ifdef RESNET
+	cl_ulong bn_time[LAYER_NUM];
+	cl_ulong elt_time[LAYER_NUM];
+#endif
 #endif
 
 	unsigned       iter_num;
 	unsigned short out_dim1xbatch;
 	unsigned int   out_dim1x2xbatch;
+	//unsigned int   write_bound;
 	unsigned char  padding_offset;
+	unsigned char  pool_conv_x;
+	unsigned char  pool_conv_y;
+	unsigned short pool_group;
+	unsigned char  pool_win_num_x;
+	unsigned char  pool_win_size_x;
+	unsigned short pool_item_loop_bound;
+	unsigned short pool_load_data_bound;
+	unsigned short pool_write_back_bound;
+	unsigned short pool_y_bound;
+	unsigned short pool_times;
 	unsigned char  conv_group_num_dim1, conv_group_num_dim2;
 	unsigned char  conv_win_size_dim1, conv_win_size_dim2;
 	unsigned int   conv_win_size_dim1x2x3;
@@ -482,6 +627,13 @@ int main(int argc, char** argv)
 	unsigned int   weight_dim1x2x3;
 	unsigned short weight_dim4_div_LaneNum;
 	unsigned int   pic_num =1;
+#ifdef RESNET
+	unsigned int   bn_dim1xdim2;
+	unsigned int   bn_input_num;
+	unsigned int   bn_control;
+	float		   frac2float;
+	float		   frac2char;
+#endif
 
 	// Kernel excutions main loops
 	for(unsigned i = 0; i < num_devices; ++i) {
@@ -506,6 +658,10 @@ int main(int argc, char** argv)
 			pool_time[j]  =0;
 			memRd_time[j] =0;
 			lrn_time[j]   =0;
+#ifdef RESNET
+			bn_time[j]	  =0;
+			elt_time[j]	  =0;
+#endif
 #endif
 
 			if(j<CONV_NUM)
@@ -516,24 +672,34 @@ int main(int argc, char** argv)
 			// Each iteration process one item in batch
 			for(unsigned k = 0; k < iter_num; ++k){
 			// Set Arguments
-			//
+#ifdef RESNET
+			unsigned char max_pool;
+			if(layer_config[j][pool_on]==1)//only for maxpool
+				max_pool=1;
+			else
+				max_pool=0;
+#endif
 			// Set knl_memRd arguments.
 			unsigned argi = 0;
 
 			// Convolution tasks (conv_x,conv_y) are divided into multiple groups
+			// each group process CONV_GP_SIZE_X*CONV_GP_SIZE_Y convolutions in parallel
 			conv_group_num_dim1   = ceil((float)layer_config[j][conv_x]/CONV_GP_SIZE_X);
 			conv_group_num_dim2   = ceil((float)layer_config[j][conv_y]/CONV_GP_SIZE_Y);
-			if(layer_config[j][conv_x]==1){
+			if(layer_config[j][conv_x]==1){ // when only one group for FC layer
 				conv_win_size_dim1  = layer_config[j][weight_w];
 				conv_group_rem_dim1   = layer_config[j][weight_w];
 			}
 			else{
 				conv_win_size_dim1  = layer_config[j][weight_w]+(CONV_GP_SIZE_X-1)*layer_config[j][conv_stride];
+				// actual number of input pixels need to be read in the last group according to the number of the remaining valid conv items in the last group
+				// the remaining valid conv items is layer_config[j][conv_x]%CONV_GP_SIZE_X
 				if(layer_config[j][conv_x]%CONV_GP_SIZE_X==0)
 					conv_group_rem_dim1   = CONV_GP_SIZE_X*layer_config[j][weight_w];
 				else
 					conv_group_rem_dim1   = layer_config[j][conv_x]%CONV_GP_SIZE_X*layer_config[j][weight_w];
 			}
+			// In this version, grouping is not performed in the column (y) direction, i.e., CONV_GP_SIZE_Y=1
 			conv_win_size_dim2    = layer_config[j][weight_h];
 			conv_group_rem_dim2   = layer_config[j][weight_h];
 			conv_win_size_dim1x2x3  = conv_win_size_dim1*conv_win_size_dim2*layer_config[j][weight_n];
@@ -626,11 +792,24 @@ int main(int argc, char** argv)
 				status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_mem), &fc_1_buf[i]);
 				checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 			}
-			else // 3
+			else if(layer_config[j][memrd_src]==3)
 			{
 				status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_mem), &fc_2_buf[i]);
 				checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 			}
+			else if(layer_config[j][memrd_src] ==4)
+			{
+				status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_mem), &pool_buf[i*input_config[batch_size]+k]);
+				checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			}
+			#ifdef RESNET
+			else // 5
+			{
+				status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_mem), &eltwise_buf[i*input_config[batch_size]+k]);
+				checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
+			}
+			#endif
+
 
 			status = clSetKernelArg(knl_memRd[i], argi++, sizeof(cl_mem), &weights_buf[i*LAYER_NUM+j]);
 			checkError(status, "Failed to set argument %d kernel memRd", argi - 1);
@@ -643,7 +822,11 @@ int main(int argc, char** argv)
 
 			conv_loop_cnt = layer_config[j][weight_w]*layer_config[j][weight_h]*layer_config[j][weight_n]/VEC_SIZE;
 			conv_output_num = layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][weight_m]/LANE_NUM; // new weight_m is divisible by LANE_NUM
+#ifdef RESNET
+			conv_control = layer_config[j][layer_type];
+#else
 			conv_control = (layer_config[j][conv_relu]&0x01)|(((~layer_config[j][pool_on])&0x01)<<1);
+#endif
 
 			status = clSetKernelArg(knl_conv[i], argi++, sizeof(cl_uint), &conv_output_num);
 			checkError(status, "Failed to set argument %d of kernel conv", argi - 1);
@@ -662,24 +845,124 @@ int main(int argc, char** argv)
 
 			status = clSetKernelArg(knl_conv[i], argi++, sizeof(cl_char), &precision_config[j][frac_dout]);
 			checkError(status, "Failed to set argument %d of kernel conv", argi - 1);
-
-			//  Set knl_pool arguments.
-			if(layer_config[j][pool_on]){
+#ifdef RESNET
+			//  Set knl_bn arguments.
+			if(j<CONV_NUM){
 				argi = 0;
-
-				pool_input_num = layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][weight_m]/LANE_NUM; // new weight_m is divisible by LANE_NUM
-				pool_line_size = layer_config[j][conv_x];
-				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uint), &pool_input_num);
+				bn_dim1xdim2 = layer_config[j][conv_x]*layer_config[j][conv_y];
+				bn_input_num = layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][weight_m]/LANE_NUM; // new weight_m is divisible by LANE_NUM
+				bn_control = (layer_config[j][conv_relu]&0x01)|(((~max_pool)&0x01)<<1);
+				frac2float=pow(2,-precision_config[j][frac_dout]);
+				// frac2char=1/frac2float;
+				frac2char=pow(2,addition_precision_config[j][bn_dout]);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_uint), &bn_dim1xdim2);
+				checkError(status, "Failed to set argument %d of kernel batchNorm", argi - 1);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_uint), &bn_input_num);
+				checkError(status, "Failed to set argument %d of kernel batchNorm", argi - 1);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_uint), &bn_control);
+				checkError(status, "Failed to set argument %d of kernel batchNorm", argi - 1);
+				// status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_char), &precision_config[j][frac_dout]);
+				// checkError(status, "Failed to set argument %d of kernel batchNorm", argi - 1);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_float), &frac2float);
+				checkError(status, "Failed to set argument %d of kernel batchNorm", argi - 1);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_float), &frac2char);
+				checkError(status, "Failed to set argument %d of kernel batchNorm", argi - 1);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_mem), &mean_buf[i*CONV_NUM+j]);
+				checkError(status, "Failed to set argument %d kernel batchNorm", argi - 1);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_mem), &var_buf[i*CONV_NUM+j]);
+				checkError(status, "Failed to set argument %d kernel batchNorm", argi - 1);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_mem), &alpha_buf[i*CONV_NUM+j]);
+				checkError(status, "Failed to set argument %d kernel batchNorm", argi - 1);
+				status = clSetKernelArg(knl_bn[i], argi++, sizeof(cl_mem), &beta_buf[i*CONV_NUM+j]);
+				checkError(status, "Failed to set argument %d kernel batchNorm", argi - 1);
+			}
+#endif
+			//  Set knl_pool arguments.
+			if(layer_config[j][pool_on]==1){
+				argi = 0;
+				pool_conv_x = layer_config[j][conv_x] + MAXPOOL_PAD;
+				pool_conv_y = layer_config[j][conv_y] + MAXPOOL_PAD;
+				pool_dim1x2 = layer_config[j][pool_x]*layer_config[j][pool_y];
+				conv_xy = pool_conv_x*pool_conv_y;
+				padding_offset = (layer_config[j][weight_m]-layer_config_original[j][weight_m])/2;
+				pool_group = layer_config[j][weight_m] / LANE_NUM;
+				pool_win_num_x   = ceil ((float)layer_config[j][pool_x] / POOL_GP_SIZE_X);
+				pool_win_size_x =  layer_config[j][pool_size]+(POOL_GP_SIZE_X-1)*layer_config[j][pool_stride];
+				pool_load_data_bound = pool_win_size_x*layer_config[j][pool_size];
+				pool_write_back_bound = POOL_GP_SIZE_X*LANE_NUM;
+				pool_item_loop_bound = pool_load_data_bound > pool_write_back_bound ? pool_load_data_bound : pool_write_back_bound;
+				pool_y_bound = (pool_win_num_x+1)*pool_item_loop_bound;
+				pool_times = pool_group*layer_config[j][pool_y];
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &pool_conv_x); //conv_x
 				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
 
-				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &pool_line_size);
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &conv_xy); //conv_xy
 				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
 
-				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_size]);
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_x]); // pool_dim1
 				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
 
-				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_stride]);
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &layer_config[j][pool_z]); // pool_dim3
 				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &pool_dim1x2); // pool_dim1x2
+				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_size]); //pool_size
+				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_stride]); //pool_stride
+				checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &padding_offset); //padding_offset
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &pool_times); //pool_times
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &pool_group); //pool_group
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &pool_y_bound); //pool_y_bound
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &pool_item_loop_bound); //pool_item_loop_bound
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &pool_load_data_bound); //pool_load_data_bound
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_ushort), &pool_write_back_bound); //pool_write_back_bound
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &pool_win_num_x); //pool_win_num_x
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_uchar), &pool_win_size_x); //pool_win_size_x
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+				if(layer_config[j][memwr_dst]==0){
+					status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_mem), &data_buf[i*input_config[batch_size]+k]);
+					checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+				}
+				else if(layer_config[j][memwr_dst]==1)
+				{
+					status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_mem), &output_buf[i*input_config[batch_size]+k]);
+					checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+				}
+				else if(layer_config[j][memwr_dst]==2)
+				{
+					status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_mem), &fc_1_buf[i]);
+					checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+				}
+				else // 3
+				{
+					status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_mem), &fc_2_buf[i]);
+					checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+				}
+
+				status = clSetKernelArg(knl_pool[i], argi++, sizeof(cl_mem), &pool_buf[i*input_config[batch_size]+k]);//top
+				checkError(status, "Failed to set argument %d of kernel memRd", argi - 1);
 			}
 
 			//  Set knl_memWr arguments.
@@ -689,18 +972,15 @@ int main(int argc, char** argv)
 			unsigned char memWr_dim1, memWr_dim2;
 			unsigned short memWr_dim3;
 
-			pool_bypass = (~layer_config[j][pool_on])&0x01;
-
-			if(layer_config[j][pool_on]==1){
-				memWr_dim1 = layer_config[j][pool_x];
-				memWr_dim2 = layer_config[j][pool_y];
-				memWr_dim3 = layer_config[j][pool_z];
-			}
-			else{
+			if(layer_config[j][pool_on] == 1){ // for ResNet pool padding
+				memWr_dim1 = layer_config[j][conv_x]+MAXPOOL_PAD;
+				memWr_dim2 = layer_config[j][conv_y]+MAXPOOL_PAD;
+		    }
+		    else{
 				memWr_dim1 = layer_config[j][conv_x];
 				memWr_dim2 = layer_config[j][conv_y];
-				memWr_dim3 = layer_config[j][conv_z];
 			}
+			memWr_dim3 = layer_config[j][conv_z];
 
 			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &memWr_dim1);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
@@ -722,6 +1002,9 @@ int main(int argc, char** argv)
 					batch_size_in_dim_log = log(batch_size_in_dim)/log(2);
 					batch_indx_dim1 = k&(~((mask>>batch_size_in_dim_log)<<batch_size_in_dim_log));
 					batch_indx_dim2 = k>>batch_size_in_dim_log;
+					//printf("k=%d (%d, %d)\n", k, batch_size_in_dim, batch_size_in_dim_log);
+					//printf("batch_indx_dim1=%d\n", batch_indx_dim1);
+					//printf("batch_indx_dim2=%d\n", batch_indx_dim2);
 				}
 			}
 			else{ // Normal WR Operations
@@ -733,6 +1016,11 @@ int main(int argc, char** argv)
 			out_dim1xbatch = memWr_dim1*batch_size_in_dim;
 			out_dim1x2xbatch = memWr_dim1*memWr_dim2*batch_size_in_dim*batch_size_in_dim;
 			padding_offset = (layer_config[j][weight_m]-layer_config_original[j][weight_m])/2;
+#ifdef RESNET
+			unsigned char bn_bypass = layer_config[j][layer_type];
+			unsigned char poolPad=MAXPOOL_PAD;
+#endif
+			//write_bound = memWr_dim1*memWr_dim2*layer_config[j][weight_m];
 
 			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_ushort), &out_dim1xbatch);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
@@ -745,11 +1033,26 @@ int main(int argc, char** argv)
 
 			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &batch_indx_dim2);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
-
-			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &pool_bypass);
+#ifdef RESNET
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &bn_bypass);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &poolPad);
+			checkError(status, "Failed to set argument %d of kernel pool", argi - 1);
+#endif
+			//status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uint), &write_bound);
+			//checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
 			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &padding_offset);
+			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_on]);
+			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_size]);
+			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+
+			status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_stride]);
 			checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 
 			// Select the kernel output mem object source
@@ -767,12 +1070,18 @@ int main(int argc, char** argv)
 				status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_mem), &fc_1_buf[i]);
 				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 			}
-			else // 3
+			else if(layer_config[j][memwr_dst]==3)// 3
 			{
 				status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_mem), &fc_2_buf[i]);
 				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
 			}
-
+#ifdef RESNET
+			else // 5
+			{
+				status = clSetKernelArg(knl_memWr[i], argi++, sizeof(cl_mem), &eltwise_buf[i*input_config[batch_size]+k]);
+				checkError(status, "Failed to set argument %d of kernel memWr", argi - 1);
+			}
+#endif
 			//  Set knl_lrn arguments.
 			if(layer_config[j][lrn_on]){
 				argi = 0;
@@ -786,13 +1095,97 @@ int main(int argc, char** argv)
 				status = clSetKernelArg(knl_lrn[i], argi++, sizeof(cl_char), &precision_config[j][frac_dout]);
 				checkError(status, "Failed to set argument %d of kernel lrn", argi - 1);
 
-				status = clSetKernelArg(knl_lrn[i], argi++, sizeof(cl_mem), &output_buf[i*input_config[batch_size]+k]);
+				status = clSetKernelArg(knl_lrn[i], argi++, sizeof(cl_mem), &pool_buf[i*input_config[batch_size]+k]);
 				checkError(status, "Failed to set argument %d of kernel lrn", argi - 1);
 
 				status = clSetKernelArg(knl_lrn[i], argi++, sizeof(cl_mem), &data_buf[i*input_config[batch_size]+k]);
 				checkError(status, "Failed to set argument %d of kernel lrn", argi - 1);
 
 			}
+#ifdef RESNET
+			//Set knl_elt arguments
+			if(eltwise_config[j][eltwise_on])
+			{
+				argi = 0;
+				unsigned elt_input_num;
+				unsigned char elt_pool_on;
+				unsigned int conv_xy;
+				float divisor;	  //1/pool_size^2
+				float in1_frac;
+				float in2_frac;
+				// float out_conver2char;
+				elt_pool_on=layer_config[j][pool_on];
+				if(elt_pool_on==3){//avgPool
+					divisor=1.0/(layer_config[j][pool_size]*layer_config[j][pool_size]);
+				}
+				else{
+					divisor=0;
+				}
+				elt_input_num=layer_config[j][conv_x]*layer_config[j][conv_y]*layer_config[j][conv_z]/VEC_SIZE;
+				conv_xy=layer_config[j][conv_x]*layer_config[j][conv_y];
+				in1_frac=pow(2,addition_precision_config[j][elt_dout]-addition_precision_config[j][elt_din1]);
+				in2_frac=pow(2,addition_precision_config[j][elt_dout]-addition_precision_config[j][elt_din2]);
+				// out_conver2char=pow(2,addition_precision_config[j][elt_dout]);
+
+				status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_uint), &elt_input_num);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_uchar), &elt_pool_on);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				// status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_uchar), &avgpoolSize);
+				// checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_x]);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_uint), &conv_xy);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+				// status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_uchar), &layer_config[j][conv_y]);
+				// checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_uchar), &layer_config[j][pool_stride]);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_float), &divisor);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_float), &in1_frac);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_float), &in2_frac);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				// status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_float), &out_conver2char);
+				// checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				if(eltwise_config[j][eltwise_in_1]==0)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &data_buf[i*input_config[batch_size]+k]);
+				else if(eltwise_config[j][eltwise_in_1]==1)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &output_buf[i*input_config[batch_size]+k]);
+				else //eltwise_config[j][eltwise_in_1]==5)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &eltwise_buf[i*input_config[batch_size]+k]);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				if(eltwise_config[j][eltwise_in_2]==0)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &data_buf[i*input_config[batch_size]+k]);
+				else if(eltwise_config[j][eltwise_in_2]==1)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &output_buf[i*input_config[batch_size]+k]);
+				else //eltwise_config[j][eltwise_in_2]==5
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &eltwise_buf[i*input_config[batch_size]+k]);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+
+				if(eltwise_config[j][eltwise_out]==0)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &data_buf[i*input_config[batch_size]+k]);
+				else if(eltwise_config[j][eltwise_out]==1)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &output_buf[i*input_config[batch_size]+k]);
+				else if(eltwise_config[j][eltwise_out]==5)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &eltwise_buf[i*input_config[batch_size]+k]);
+				else //(eltwise_config[j][eltwise_out]==2)
+					status = clSetKernelArg(knl_elt[i], argi++, sizeof(cl_mem), &fc_1_buf[i]);
+				checkError(status, "Failed to set argument %d of kernel elt", argi - 1);
+			}
+#endif
 
 #ifdef USE_SDX_1DDR
 			// Wait until all data are send to DDR memory
@@ -818,14 +1211,16 @@ int main(int argc, char** argv)
 
 			status = clEnqueueTask(que_conv[i], knl_conv[i], 0, NULL, &conv_event[i]);
 			checkError(status, "Failed to launch kernel conv kernel");
-
-			// kernel pool
-			if(layer_config[j][pool_on]){
-				status = clEnqueueTask(que_pool[i], knl_pool[i], 0, NULL, &pool_event[i]);
-				checkError(status, "Failed to launch kernel pooling");
+			#ifdef RESNET
+			if(j<CONV_NUM){
 				if(k == 0&&pic_num==1)
-					printf("\nLaunching single work-item kernel Pooling\n");
+						printf("\nLaunching single work-item kernel BatchNorm\n");
+
+			  status = clEnqueueTask(que_bn[i], knl_bn[i], 0, NULL, &bn_event[i]);
+			  checkError(status, "Failed to launch kernel BatchNorm kernel");
 			}
+			#endif
+
 
 			// kernel memWr
 			knl_memWr_global_size[0] = memWr_dim1;
@@ -840,11 +1235,25 @@ int main(int argc, char** argv)
 									(int)knl_memWr_local_size[0], (int)knl_memWr_local_size[1], (int)knl_memWr_local_size[2],
 									(int)knl_memWr_global_size[0], (int)knl_memWr_global_size[1], (int)knl_memWr_global_size[2]);
 #ifdef XILINX
-            status = clEnqueueTask(que_memWr[i], knl_memWr[i], 0, NULL, &memWr_event[i]);
+			status = clEnqueueTask(que_memWr[i], knl_memWr[i], 0, NULL, &memWr_event[i]);
 #else // IntelFPGA
 			status = clEnqueueNDRangeKernel(que_memWr[i], knl_memWr[i], 3, NULL, knl_memWr_global_size, knl_memWr_local_size, 0, NULL, &memWr_event[i]);
+			//status = clEnqueueTask(que_memWr[i], knl_memWr[i], 0, NULL, &memWr_event[i]);
+
 #endif
 			checkError(status, "Failed to launch kernel memWr");
+
+			if(layer_config[j][pool_on]==1){
+				// kernel pool
+
+				status = clEnqueueTask(que_pool[i], knl_pool[i], 0, NULL, &pool_event[i]);
+				//status = clEnqueueNDRangeKernel(que_pool[i], knl_pool[i], 3, NULL, knl_maxPool_global_size, knl_maxPool_local_size, 0, NULL, &pool_event[i]);
+				checkError(status, "Failed to launch kernel pooling");
+				if(k == 0&&pic_num==1)
+					printf("\nLaunching single work-item kernel Pool\n");
+					//printf("\nLaunching kernel pool with local size: %d, %d, %d  (global size: %d, %d, %d)\n", (int)knl_maxPool_local_size[0], (int)knl_maxPool_local_size[1], (int)knl_maxPool_local_size[2], (int)knl_maxPool_global_size[0], (int)knl_maxPool_global_size[1], (int)knl_maxPool_global_size[2]);
+			}
+
 
 
 			// kernel lrn
@@ -860,14 +1269,35 @@ int main(int argc, char** argv)
 				if(k == 0&&pic_num==1)
 					printf("\nLaunching kernel lrn with local size: %d, %d, %d  (global size: %d, %d, %d)\n", (int)knl_lrn_local_size[0], (int)knl_lrn_local_size[1], (int)knl_lrn_local_size[2], (int)knl_lrn_global_size[0], (int)knl_lrn_global_size[1], (int)knl_lrn_global_size[2]);
 
-				status = clEnqueueNDRangeKernel(que_memWr[i], knl_lrn[i], 3, NULL, knl_lrn_global_size, knl_lrn_local_size, 0, NULL, &lrn_event[i]);
+				status = clEnqueueNDRangeKernel(que_lrn[i], knl_lrn[i], 3, NULL, knl_lrn_global_size, knl_lrn_local_size, 1, &pool_event[i], &lrn_event[i]);
 				checkError(status, "Failed to launch kernel lrn");
 			}
+#ifdef RESNET
+			if(eltwise_config[j][eltwise_on]){
+				//enqueue elt kernel
+				if(k == 0&&pic_num==1)
+				printf("\nLaunching single work-item kernel eltwise\n");
 
+				status = clEnqueueTask(que_memWr[i], knl_elt[i], 0, NULL, &elt_event[i]);
+				checkError(status, "Failed to launch kernel eltwise kernel");
+			}
+
+#endif
 			// Wait for all kernel to finish
 			if(layer_config[j][lrn_on]){
 				status = clWaitForEvents(num_devices, lrn_event);
 				checkError(status, "Failed to finish lrn event");
+			}
+			#ifdef RESNET
+				else if(eltwise_config[j][eltwise_on]){
+					//wait for elt kernel done
+					status = clWaitForEvents(num_devices, elt_event);
+					checkError(status, "Failed to finish elt event");
+				}
+			#endif
+			else if(layer_config[j][pool_on]==1){
+				status = clWaitForEvents(num_devices, pool_event);
+				checkError(status, "Failed to finish memWR event");
 			}
 			else{
 				status = clWaitForEvents(num_devices, memWr_event);
@@ -878,11 +1308,18 @@ int main(int argc, char** argv)
 			// Profile mode, get excution time for each kernel
 			memRd_time[j] += getKernelStartEndTime(memRd_event[i]);
 			conv_time[j]  += getKernelStartEndTime(conv_event[i]);
-			if(layer_config[j][pool_on])
+			if(layer_config[j][pool_on]==1)
 				pool_time[j] += getKernelStartEndTime(pool_event[i]);
 			memWr_time[j] += getKernelStartEndTime(memWr_event[i]);
 			if(layer_config[j][lrn_on])
 				lrn_time[j] += getKernelStartEndTime(lrn_event[i]);
+#ifdef RESNET
+			if(j<CONV_NUM)
+				bn_time[j] += getKernelStartEndTime(bn_event[i]);
+			if(eltwise_config[j][eltwise_on]){
+				elt_time[j] += getKernelStartEndTime(elt_event[i]);
+			}
+#endif
 #endif
 
 			// Must release event object to avoid performance degeneration !!!
@@ -892,7 +1329,7 @@ int main(int argc, char** argv)
 			checkError(status, "Failed to release Conv event object");
 			clReleaseEvent(memWr_event[i]);
 			checkError(status, "Failed to release memWR event object");
-			if(layer_config[j][pool_on]){
+			if(layer_config[j][pool_on]==1){
 				status = clReleaseEvent(pool_event[i]);
 				checkError(status, "Failed to release pool event object");
 			}
@@ -900,7 +1337,16 @@ int main(int argc, char** argv)
 				status = clReleaseEvent(lrn_event[i]);
 				checkError(status, "Failed to release lrn event object");
 			}
-
+#ifdef RESNET
+			if(j<CONV_NUM){
+				clReleaseEvent(bn_event[i]);
+				checkError(status, "Failed to release batchNorm event object");
+			}
+			if(eltwise_config[j][eltwise_on]){
+				clReleaseEvent(elt_event[i]);
+				checkError(status, "Failed to release elt event object");
+			}
+#endif
 			}// end of batch iteration
 
 
@@ -947,7 +1393,12 @@ int main(int argc, char** argv)
 		printf("    Conv : %0.3f ms\n", double(conv_time[j])/batch_float * 1e-6);
 		printf("    Pool : %0.3f ms\n", double(pool_time[j])/batch_float * 1e-6);
 		printf("    MemWr: %0.3f ms\n", double(memWr_time[j])/batch_float * 1e-6);
+#ifdef RESNET
+		printf("    Bn   : %0.3f ms\n", double(bn_time[j])/batch_float * 1e-6);
+		printf("    Elt   : %0.3f ms\n", double(elt_time[j])/batch_float * 1e-6);
+#else
 		printf("    Lrn  : %0.3f ms\n", double(lrn_time[j])/batch_float * 1e-6);
+#endif
 		kernel_time += conv_time[j];
 	}
 	printf("\nTotal kernel runtime %0.3f ms \n", double(kernel_time) * 1e-6);
@@ -976,7 +1427,7 @@ void readDataBack()
 	if(batch_item_num>(input_config[batch_size]-1)){
 		printf("Error: wrong configuration，can't verify the item since it is layer than batch size !!!\n\n");
 	}
-
+	// TODO: verify results
 	if(LAYER_NUM<CONV_NUM){ // verify conv results
 		read_buf_size = output_config[output_w]*output_config[output_h]*output_config[output_n];
 
@@ -985,28 +1436,78 @@ void readDataBack()
 		read_buf_size = output_config[output_w]*output_config[output_h]*output_config[output_n]*input_config[batch_size];
 
 	// For the last conv layer and all fc layers, read result from one of the fc buffers
-	if(layer_config[LAYER_NUM-1][memwr_dst] == 2){
+#ifdef RESNET
+	if(eltwise_config[LAYER_NUM-1][eltwise_on]){
+		if(eltwise_config[LAYER_NUM-1][eltwise_out]==0){
+			printf("\nCopyed one results from NO.%d data buffers(eltwise).\n", batch_item_num);
+			status = clEnqueueReadBuffer(que_memWr[0], data_buf[batch_item_num], CL_FALSE,           // read from device0
+				0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
+			checkError(status, "Failed to set transfer output data");
+		}
+		else if(eltwise_config[LAYER_NUM-1][eltwise_out]==1){
+			printf("\nCopyed one results from NO.%d output buffers(eltwise).\n", batch_item_num);
+			status = clEnqueueReadBuffer(que_memWr[0], output_buf[batch_item_num], CL_FALSE,           // read from device0
+				0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
+			checkError(status, "Failed to set transfer output data");
+		}
+		else if(eltwise_config[LAYER_NUM-1][eltwise_out]== 2){
+			printf("\nCopyed all batched results from fc_1 buffers(eltwise).\n");
+			status = clEnqueueReadBuffer(que_memWr[0], fc_1_buf[0], CL_FALSE,          // read from device0
+				0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
+			checkError(status, "Failed to set transfer output data");
+		}
+		else if(eltwise_config[LAYER_NUM-1][eltwise_out]== 5){
+			printf("\nCopyed one results from NO.%d eltwise buffers(eltwise).\n", batch_item_num);
+			status = clEnqueueReadBuffer(que_memWr[0], eltwise_buf[batch_item_num], CL_FALSE,          // read from device0
+				0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
+			checkError(status, "Failed to set transfer output data");
+		}		
+	}
+	
+#endif	
+	if((layer_config[LAYER_NUM-1][lrn_on] == 0) && (layer_config[LAYER_NUM-1][pool_on] != 1)){
+		if(layer_config[LAYER_NUM-1][memwr_dst] == 0){
+			printf("\nCopyed all batched results from data buffers.\n");
+			status = clEnqueueReadBuffer(que_memWr[0], data_buf[0], CL_FALSE,          // read from device0
+				0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
+			checkError(status, "Failed to set transfer output data");
+		}
+		else if(layer_config[LAYER_NUM-1][memwr_dst] == 1){
+			printf("\nCopyed all batched results from output buffers.\n");
+			status = clEnqueueReadBuffer(que_memWr[0], output_buf[0], CL_FALSE,          // read from device0
+				0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
+			checkError(status, "Failed to set transfer output data");
+		}
+		else if(layer_config[LAYER_NUM-1][memwr_dst] == 2){
 		printf("\nCopyed all batched results from fc_1 buffers.\n");
 		status = clEnqueueReadBuffer(que_memWr[0], fc_1_buf[0], CL_FALSE,          // read from device0
 			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
 		checkError(status, "Failed to set transfer output data");
-	}
-	else if(layer_config[LAYER_NUM-1][memwr_dst] == 3){
+		}
+		else if(layer_config[LAYER_NUM-1][memwr_dst] == 3){
 		printf("\nCopyed all batched results from fc_2 buffers.\n");
 		status = clEnqueueReadBuffer(que_memWr[0], fc_2_buf[0], CL_FALSE,          // read from device0
 			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
 		checkError(status, "Failed to set transfer output data");
+		}
+#ifdef RESNET
+		else if(layer_config[LAYER_NUM-1][memwr_dst] == 5){
+		printf("\nCopyed one results from NO.%d eltwise buffers.\n", batch_item_num);
+		status = clEnqueueReadBuffer(que_memWr[0], eltwise_buf[batch_item_num], CL_FALSE,          // read from device0
+			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
+		checkError(status, "Failed to set transfer output data");
+		}
+#endif
 	}
-	// For other layers, read results from data and output buffers
-	else if(layer_config[LAYER_NUM-1][memwr_dst]^layer_config[LAYER_NUM-1][lrn_on]){// if lrn is used, the mem dst is changed back to src
-		printf("\nCopyed one result from NO.%d output buffers.\n", batch_item_num);
-		status = clEnqueueReadBuffer(que_memWr[0], output_buf[batch_item_num], CL_FALSE,         // read from device0
+	else if((layer_config[LAYER_NUM-1][lrn_on] == 0) && (layer_config[LAYER_NUM-1][pool_on] == 1)){
+		printf("\nCopyed all batched results from pool buffers.\n");
+		status = clEnqueueReadBuffer(que_pool[0], pool_buf[0], CL_FALSE,          // read from device0
 			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
 		checkError(status, "Failed to set transfer output data");
 	}
 	else{
-		printf("\nCopyed one results from NO.%d data buffers.\n", batch_item_num);
-		status = clEnqueueReadBuffer(que_memWr[0], data_buf[batch_item_num], CL_FALSE,           // read from device0
+		printf("\nCopyed all batched results from data buffers.\n");
+		status = clEnqueueReadBuffer(que_lrn[0], data_buf[0], CL_FALSE,          // read from device0
 			0, sizeof(DTYPE) * read_buf_size, (void *)output, 0, NULL, &finish_event[0]);
 		checkError(status, "Failed to set transfer output data");
 	}
@@ -1018,15 +1519,18 @@ void readDataBack()
 
 	if(LAYER_NUM>=CONV_NUM){  //Select with batch item you would like to verify from the last conv and all fc output
 		printf("Selected item = %d from the combined batch results in fc buffers\n", batch_item_num);
+		// Extract one results from all batch arranged results stored in fc buffers
 		extractOutput(output, output_one_item, batch_item_num, input_config[batch_size], output_config[output_w], output_config[output_h], output_config[output_n]);
 	}
 	else{
-		if(layer_config[LAYER_NUM-1][pool_on]==1)
+		if(layer_config[LAYER_NUM-1][pool_on])
+			// Copy results from one of the output/data buffers
 			extractOutput(output, output_one_item, 0, 1, layer_config[LAYER_NUM-1][pool_x], layer_config[LAYER_NUM-1][pool_y], layer_config[LAYER_NUM-1][pool_z]);
 		else
 			extractOutput(output, output_one_item, 0, 1, layer_config[LAYER_NUM-1][conv_x], layer_config[LAYER_NUM-1][conv_y], layer_config[LAYER_NUM-1][conv_z]);
 	}
 
+	// Reorder one item of the batch results into scalar format
 	reorderOutput(output_one_item, output_reorder, output_config[output_w], output_config[output_h], output_config[output_n]);
 }
 
@@ -1034,24 +1538,24 @@ void verifyResult(int num)
 {
 
 #ifdef USE_OPENCV
-    int max_label;
-    char * substr;
+	int max_label;
+	char * substr;
 	softmax(output_reorder, output_one_item);
 	max_label = getProb(output_one_item);
 	// Show the picture
-    substr = &synset_buf[max_label][10];
+	substr = &synset_buf[max_label][10];
 
 	Mat img = imread(picture_file_path);
-    putText(img,substr,Point(20, 50), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(255, 255, 0), 2, 8);
-    if(max_label == label[num-1]){
-        putText(img,"True",Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, 8);
-    } else {
-        putText(img,"False",Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 255), 2, 8);
-        printf("False: True_label = %d Inferred_label = %d\n\n", label[num], max_label);
-    }
-    imshow( "PipeCNN", img);
+	putText(img,substr,Point(20, 50), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(255, 255, 0), 2, 8);
+	if(max_label == label[num-1]){
+		putText(img,"True",Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0), 2, 8);
+	} else {
+		putText(img,"False",Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 255), 2, 8);
+		printf("False: True_label = %d Inferred_label = %d\n\n", label[num], max_label);
+	}
+	imshow( "PipeCNN", img);
 	cvMoveWindow("PipeCNN",0,0);//set the window's position
-    waitKey(600);
+	waitKey(600);
 #else
 	// Validate the results
 	printf("\nStart verifying results ...\n");
@@ -1111,13 +1615,13 @@ void loadImageToBuffer(int num)
 		file_size = bin_file_r.tellg();
 		bin_file_r.seekg(0, bin_file_r.beg);
 
-    	bin_file_r.read((char *)image, sizeof(DTYPE)*IMAGE_FILE_SIZE);
-    	printf("\n%d bytes image data read from binary files\n", file_size);
+		bin_file_r.read((char *)image, sizeof(DTYPE)*IMAGE_FILE_SIZE);
+		printf("\n%d bytes image data read from binary files\n", file_size);
 		if(IMAGE_FILE_SIZE!=(file_size/(sizeof(DTYPE))))
 			printf("Warning: image file size does not match user configuration !!!\n");
-    	bin_file_r.close();
-    }
-    else
+		bin_file_r.close();
+	}
+	else
 		printf("Image file does not exits !!!\n");
 #endif
 
@@ -1164,7 +1668,12 @@ int prepare()
 	unsigned output_size;
 	unsigned godref_size;
 	int ptr=0;  // original weight and bias offset for each layer
-
+#ifdef RESNET
+	int ptr_mean=0;
+	int ptr_var=0;
+	int ptr_alpha=0;
+	int ptr_beta=0;
+#endif
 	unsigned char  conv_win_size_dim1, conv_win_size_dim2;
 
 	unsigned padding_offset[LAYER_NUM];
@@ -1180,6 +1689,8 @@ int prepare()
 		// Second, perform padding on dim4, when it is not divisible by LANE_NUM
 		if(layer_config[ll][weight_m]%LANE_NUM != 0){
 			printf("\nWarnning: layer-%d requires padding zero-value feature maps for give param LANE_NUM=%d\n", ll+1, LANE_NUM);
+			// change the num of output featuremaps to new value that is divisible by LANE_NUM
+			// Note: the num of input feature maps of next layer remains the same
 			layer_config[ll][weight_m] = ceil((float)layer_config[ll][weight_m]/LANE_NUM)*LANE_NUM;
 			layer_config[ll][bias_size] = layer_config[ll][weight_m];
 			printf("      original num of feature maps is %d, new value is %d\n", layer_config_original[ll][weight_m], layer_config[ll][weight_m]);
@@ -1222,10 +1733,17 @@ int prepare()
 				printf("\nError: incorrect setting of parameter VEC_SIZE !!!\n");
 				return 1;
 			}
+#ifdef RESNET
+			if((layer_config_original[ll][data_n]!=layer_config_original[eltwise_layer_previous[ll]-1][conv_z])){
+				printf("\nError: incorrect setting of convolution input/output size for layer-%d!!!\n", ll+1);
+				return 1;
+			}
+#else
 			if((layer_config_original[ll][data_n]!=layer_config_original[ll-1][conv_z])){
 				printf("\nError: incorrect setting of convolution input/output size for layer-%d!!!\n", ll+1);
 				return 1;
 			}
+#endif
 		}
 		if((layer_config_original[ll][conv_x]!=(layer_config_original[ll][data_w]-layer_config_original[ll][weight_w]+2*layer_config_original[ll][conv_padding])/layer_config_original[ll][conv_stride]+1)
 			|| (layer_config_original[ll][conv_y]!=(layer_config_original[ll][data_h]-layer_config_original[ll][weight_h]+2*layer_config_original[ll][conv_padding])/layer_config_original[ll][conv_stride]+1)
@@ -1233,13 +1751,15 @@ int prepare()
 			printf("\nError: incorrect setting of convolution output size or filter params for layer-%d!!!\n", ll+1);
 			return 1;
 		}
-		if(layer_config_original[ll][pool_on] && ((layer_config_original[ll][pool_x]!=(layer_config_original[ll][conv_x]-layer_config_original[ll][pool_size])/layer_config_original[ll][pool_stride]+1)
-			|| (layer_config_original[ll][pool_y]!=(layer_config_original[ll][conv_y]-layer_config_original[ll][pool_size])/layer_config_original[ll][pool_stride]+1)
+		//ResNet maxPool need pad
+		if((layer_config_original[ll][pool_on]==1) && ((layer_config_original[ll][pool_x]!=((layer_config_original[ll][conv_x]+MAXPOOL_PAD)-layer_config_original[ll][pool_size])/layer_config_original[ll][pool_stride]+1)
+			|| (layer_config_original[ll][pool_y]!=((layer_config_original[ll][conv_y]+MAXPOOL_PAD)-layer_config_original[ll][pool_size])/layer_config_original[ll][pool_stride]+1)
 		    || (layer_config_original[ll][pool_z]!=layer_config_original[ll][conv_z]))){
 			printf("\nError: incorrect setting of pooling input/output size for layer-%d!!!\n", ll+1);
 			return 1;
 		}
 
+		// TODO: check buffer size, hw params
 		if(layer_config[ll][conv_x]==1){ // when only one group for FC layer
 			conv_win_size_dim1  = layer_config[ll][weight_w];
 		}
@@ -1322,24 +1842,24 @@ int prepare()
 		}
 	}
 
-    // Weights
-    bin_file_r.open(weight_file_path, ios::in | ios::binary);
+	// Weights
+	bin_file_r.open(weight_file_path, ios::in | ios::binary);
 
-    if(bin_file_r.is_open())
-    {
+	if(bin_file_r.is_open())
+	{
 		//Get file size
 		bin_file_r.seekg(0, bin_file_r.end);
 		file_size = bin_file_r.tellg();
 		bin_file_r.seekg(0, bin_file_r.beg);
 
-    	bin_file_r.read((char *)weights, sizeof(DTYPE)*WEIGHTS_FILE_SIZE);
-    	printf("\n%d total weights read \n", file_size/((int)sizeof(DTYPE)));
+		bin_file_r.read((char *)weights, sizeof(DTYPE)*WEIGHTS_FILE_SIZE);
+		printf("\n%d total weights read \n", file_size/((int)sizeof(DTYPE)));
 		if(WEIGHTS_FILE_SIZE!=(file_size/(sizeof(DTYPE))))
 			printf("Warning: weight file size does not match user configuration !!!\n");
-    	bin_file_r.close();
-    }
-    else
-    	printf("Weights file does not exits !!!\n");
+		bin_file_r.close();
+	}
+	else
+		printf("Weights file does not exits !!!\n");
 
 	// Synset_words
      int nn=0;
@@ -1350,10 +1870,10 @@ int prepare()
 		 return 1;
 	 }
 	 while (!feof(fp)){
-        fgets(synset_buf[nn], 1024, fp);
-        nn++;
-    }
-    fclose(fp);
+		fgets(synset_buf[nn], 1024, fp);
+		nn++;
+	}
+	fclose(fp);
 
 #ifdef USE_OPENCV
 	// label
@@ -1365,31 +1885,31 @@ int prepare()
 		 return 1;
 	 }
 	while (!feof(fp)&&nn<PICTURE_NUM){
-		 //printf("read%d......\n",nn);
-        fgets(label_buf[nn], 1024, fp);
-        nn++;
-    }
+		//printf("read%d......\n",nn);
+		fgets(label_buf[nn], 1024, fp);
+		nn++;
+	}
 	fclose(fp);
 	labelNum();
 #endif
-    // golden_output
+	// golden_output
 	bin_file_r.open(ref_file_path, ios::in | ios::binary);
 
-    if(bin_file_r.is_open())
-    {
+	if(bin_file_r.is_open())
+	{
 		//Get file size
 		bin_file_r.seekg(0, bin_file_r.end);
 		file_size = bin_file_r.tellg();
 		bin_file_r.seekg(0, bin_file_r.beg);
 
-    	bin_file_r.read((char *)golden_ref, sizeof(DTYPE)*godref_size);
-    	printf("%d total output reference read \n\n", file_size/((int)sizeof(DTYPE)));
+		bin_file_r.read((char *)golden_ref, sizeof(DTYPE)*godref_size);
+		printf("%d total output reference read \n\n", file_size/((int)sizeof(DTYPE)));
 		if(godref_size!=(file_size/(sizeof(DTYPE))))
 			printf("Warning: golden reference file size does not match !!!\n");
-    	bin_file_r.close();
-    }
-    else
-    	printf("Golden file does not exits !!!\n");
+		bin_file_r.close();
+	}
+	else
+		printf("Golden file does not exits !!!\n");
 
 	// Layer-1
 	reorderWeights(weights, weight_conv[0], layer_config[0][weight_w], layer_config[0][weight_h], layer_config[0][weight_n], layer_config[0][weight_m], layer_config_original[0][weight_n], layer_config_original[0][weight_m], ptr, padding_offset[0], VEC_SIZE, LANE_NUM);
@@ -1411,7 +1931,118 @@ int prepare()
 		reorderBias(weights, bias_conv[j], ptr, padding_offset[j], layer_config[j][bias_size], layer_config_original[j][bias_size], LANE_NUM);
 		ptr+=layer_config_original[j][bias_size];
 	}
+#ifdef RESNET
+	means		 = (FTYPE *)alignedMalloc(sizeof(FTYPE)*MEAN_FILE_SIZE,DMA_ALIGNMENT);
+	var			 = (FTYPE *)alignedMalloc(sizeof(FTYPE)*VAR_FILE_SIZE,DMA_ALIGNMENT);
+	alpha		 = (FTYPE *)alignedMalloc(sizeof(FTYPE)*ALPHA_FILE_SIZE,DMA_ALIGNMENT);
+	beta		 = (FTYPE *)alignedMalloc(sizeof(FTYPE)*BETA_FILE_SIZE,DMA_ALIGNMENT);
+	if(means== NULL||var== NULL||alpha== NULL||beta== NULL)
+	{
+		printf("Not enough memory !!!");
+		alignedFree(means);
+		alignedFree(var);
+		alignedFree(alpha);
+		alignedFree(beta);
+		return 1;
+	}
+	//mean
+	bin_file_r.open(mean_file_path, ios::in | ios::binary);
+    if(bin_file_r.is_open())
+    {
+		//Get file size
+		bin_file_r.seekg(0, bin_file_r.end);
+		file_size = bin_file_r.tellg();
+		bin_file_r.seekg(0, bin_file_r.beg);
+    	bin_file_r.read((char *)means, sizeof(FTYPE)*MEAN_FILE_SIZE);
+    	printf("\n%d total mean read \n", file_size/((int)sizeof(FTYPE)));
+		if(MEAN_FILE_SIZE!=(file_size/(sizeof(FTYPE))))
+			printf("Warning: mean file size does not match user configuration !!!\n");
+    	bin_file_r.close();
+    }
+    else
+    	printf("mean file does not exits !!!\n");
+	//var
+	bin_file_r.open(var_file_path, ios::in | ios::binary);
+    if(bin_file_r.is_open())
+    {
+		//Get file size
+		bin_file_r.seekg(0, bin_file_r.end);
+		file_size = bin_file_r.tellg();
+		bin_file_r.seekg(0, bin_file_r.beg);
 
+    	bin_file_r.read((char *)var, sizeof(FTYPE)*VAR_FILE_SIZE);
+    	printf("\n%d total var read \n", file_size/((int)sizeof(FTYPE)));
+		if(VAR_FILE_SIZE!=(file_size/(sizeof(FTYPE))))
+			printf("Warning: var file size does not match user configuration !!!\n");
+    	bin_file_r.close();
+    }
+    else
+    	printf("var file does not exits !!!\n");
+	//alpha
+	bin_file_r.open(alpha_file_path, ios::in | ios::binary);
+    if(bin_file_r.is_open())
+    {
+		//Get file size
+		bin_file_r.seekg(0, bin_file_r.end);
+		file_size = bin_file_r.tellg();
+		bin_file_r.seekg(0, bin_file_r.beg);
+
+    	bin_file_r.read((char *)alpha, sizeof(FTYPE)*ALPHA_FILE_SIZE);
+    	printf("\n%d total alpha read \n", file_size/((int)sizeof(FTYPE)));
+		if(ALPHA_FILE_SIZE!=(file_size/(sizeof(FTYPE))))
+			printf("Warning: alpha file size does not match user configuration !!!\n");
+    	bin_file_r.close();
+    }
+    else
+    	printf("alpha file does not exits !!!\n");
+	//beta
+	bin_file_r.open(beta_file_path, ios::in | ios::binary);
+    if(bin_file_r.is_open())
+    {
+		//Get file size
+		bin_file_r.seekg(0, bin_file_r.end);
+		file_size = bin_file_r.tellg();
+		bin_file_r.seekg(0, bin_file_r.beg);
+
+    	bin_file_r.read((char *)beta, sizeof(FTYPE)*BETA_FILE_SIZE);
+    	printf("\n%d total beta read \n", file_size/((int)sizeof(FTYPE)));
+		if(BETA_FILE_SIZE!=(file_size/(sizeof(FTYPE))))
+			printf("Warning: beta file size does not match user configuration !!!\n");
+    	bin_file_r.close();
+    }
+    else
+    	printf("beta file does not exits !!!\n");
+	for(int j=0; j <CONV_NUM&&j<LAYER_NUM; j++){
+		mean_conv[j]=(FTYPE *)alignedMalloc(sizeof(FTYPE)*layer_config[j][bias_size], DMA_ALIGNMENT);
+		var_conv[j]=(FTYPE *)alignedMalloc(sizeof(FTYPE)*layer_config[j][bias_size], DMA_ALIGNMENT);
+		alpha_conv[j]=(FTYPE *)alignedMalloc(sizeof(FTYPE)*layer_config[j][bias_size], DMA_ALIGNMENT);
+		beta_conv[j]=(FTYPE *)alignedMalloc(sizeof(FTYPE)*layer_config[j][bias_size], DMA_ALIGNMENT);
+		memset(mean_conv[j], 0, sizeof(FTYPE)*layer_config[j][bias_size]);// reset all value (include padding value) to zero
+		memset(var_conv[j], 0, sizeof(FTYPE)*layer_config[j][bias_size]);// reset all value (include padding value) to zero
+		memset(alpha_conv[j], 0, sizeof(FTYPE)*layer_config[j][bias_size]);// reset all value (include padding value) to zero
+		memset(beta_conv[j], 0, sizeof(FTYPE)*layer_config[j][bias_size]);// reset all value (include padding value) to zero
+		if(mean_conv[j] == NULL || var_conv[j] == NULL||alpha_conv[j] == NULL || beta_conv[j] == NULL )
+		{
+			printf("Not enough memory !!!");
+			alignedFree(mean_conv[j]);
+			alignedFree(var_conv[j]);
+			alignedFree(alpha_conv[j]);
+			alignedFree(beta_conv[j]);
+			return 1;
+		}
+
+		reorderMVAB(means, mean_conv[j], ptr_mean, padding_offset[j], layer_config[j][bias_size], layer_config_original[j][bias_size], LANE_NUM);
+		ptr_mean+=layer_config_original[j][bias_size];
+		reorderMVAB(var, var_conv[j], ptr_var, padding_offset[j], layer_config[j][bias_size], layer_config_original[j][bias_size], LANE_NUM);
+		ptr_var+=layer_config_original[j][bias_size];
+		reorderMVAB(alpha, alpha_conv[j],ptr_alpha, padding_offset[j], layer_config[j][bias_size], layer_config_original[j][bias_size], LANE_NUM);
+		ptr_alpha+=layer_config_original[j][bias_size];
+		reorderMVAB(beta, beta_conv[j], ptr_beta, padding_offset[j], layer_config[j][bias_size], layer_config_original[j][bias_size], LANE_NUM);
+		ptr_beta+=layer_config_original[j][bias_size];
+		for(unsigned jj=0;jj<layer_config[j][bias_size];jj++)//for knl_bn
+			var_conv[j][jj]=1.0/pow(var_conv[j][jj],0.5);
+	}
+#endif
 	return 0;
 }
 
@@ -1482,6 +2113,30 @@ void reorderBias(DTYPE *dataIn, DTYPE *bias, unsigned offset, unsigned padding_o
 	// release resource
 	free(copy_with_padding);
 }
+#ifdef RESNET
+//reorder Mean,Var,Alpha and Beta,same as reorderBias(),but the type is different
+void reorderMVAB(FTYPE *dataIn, FTYPE *dataout, unsigned offset, unsigned padding_offset, unsigned dim4, unsigned dim4_original, unsigned laneNum){
+	FTYPE *copy_with_padding;
+	// first copy the data into new buffer with zero paddings
+	copy_with_padding  = (FTYPE *)malloc(sizeof(FTYPE)*dim4);
+	if(copy_with_padding == NULL)
+	{
+		printf("Not enough memory when reordering Mean/Var/Alpha/Beta!!!");
+		free(copy_with_padding);
+	}
+	memset(copy_with_padding, 0, sizeof(FTYPE)*dim4);
+	// padding evenly on two sides of weight_m
+	memcpy(copy_with_padding+padding_offset, dataIn+offset, sizeof(FTYPE)*dim4_original);
+	// second, perform vectorization by factor of LANE_NUM
+	for(unsigned m = 0; m<(dim4/laneNum); m++){
+		for(unsigned ll = 0; ll<laneNum; ll++){
+			dataout[m*laneNum + ll] = (FTYPE) copy_with_padding[m*laneNum + ll];
+		}
+	}
+	// release resource
+	free(copy_with_padding);
+}
+#endif
 
 
 // Extract one item from batch results
@@ -1543,39 +2198,39 @@ void softmax(DTYPE *output_reorder , DTYPE *output)
 	float sum_exp=0.0;
 	for(i=0;i<output_config[output_n];i++)
 	{
-	  if(data_max<output_reorder[i])
-	    data_max=output_reorder[i];
+	if(data_max<output_reorder[i])
+		data_max=output_reorder[i];
 	}
-    for(i=0;i<output_config[output_n];i++)
+	for(i=0;i<output_config[output_n];i++)
 	{
-	   data_exp=exp((float)output_reorder[i]-data_max);
-	   sum_exp += data_exp;
-	 }
-    for(i=0;i<output_config[output_n];i++)
+		data_exp=exp((float)output_reorder[i]-data_max);
+		sum_exp += data_exp;
+	}
+	for(i=0;i<output_config[output_n];i++)
 	{
-	   data_exp=exp((float)output_reorder[i]-data_max);
-	   output[i]=data_exp / sum_exp*100.0;
+		data_exp=exp((float)output_reorder[i]-data_max);
+		output[i]=data_exp / sum_exp*100.0;
 
-	 }
+	}
 }
 
 int getProb(DTYPE *output)
 {
-    int m=0;
-    float max=output[0];
+	int m=0;
+	float max=output[0];
 
 	// find the class with the highest score
-    for(unsigned int i=0;i<output_config[output_n];i++){
-        if(max<output[i]){
+	for(unsigned int i=0;i<output_config[output_n];i++){
+		if(max<output[i]){
 			max=output[i];
-            m=i;
+			m=i;
 		}
-    }
+	}
 
 	// replace the last two ASCII charactor with space
 	int ii=strlen(synset_buf[m]);
-    synset_buf[m][ii-2]= 32;
-    synset_buf[m][ii-1]= 32;
+	synset_buf[m][ii-2]= 32;
+	synset_buf[m][ii-1]= 32;
 
 	printf("\nThe inference result is %s (the prob is %5.2f) \n\n", synset_buf[m], max);
 
@@ -1774,8 +2429,14 @@ void cleanup()
 		if(que_pool && que_pool[i]) {
 			clReleaseCommandQueue(que_pool[i]);
 		}
+		if(que_lrn && que_lrn[i]) {
+			clReleaseCommandQueue(que_lrn[i]);
+		}
 		if(data_buf && data_buf[i]) {
 			clReleaseMemObject(data_buf[i]);
+		}
+		if(pool_buf && pool_buf[i]) {
+			clReleaseMemObject(pool_buf[i]);
 		}
 		if(output_buf && output_buf[i]) {
 			clReleaseMemObject(output_buf[i]);
@@ -1792,6 +2453,32 @@ void cleanup()
 		if(fc_2_buf && fc_2_buf[i]) {
 			clReleaseMemObject(fc_2_buf[i]);
 		}
+#ifdef RESNET
+		if(eltwise_buf && eltwise_buf[i]) {
+			clReleaseMemObject(eltwise_buf[i]);
+	}
+		if(knl_bn && knl_bn[i]) {
+			clReleaseKernel(knl_bn[i]);
+		}
+		if(que_bn && que_bn[i]) {
+			clReleaseCommandQueue(que_bn[i]);
+		}
+		if(knl_elt && knl_elt[i]) {
+			clReleaseKernel(knl_elt[i]);
+		}
+		if(mean_buf && mean_buf[i]) {
+			clReleaseMemObject(mean_buf[i]);
+		}
+		if(var_buf && var_buf[i]) {
+			clReleaseMemObject(var_buf[i]);
+		}
+		if(alpha_buf && alpha_buf[i]) {
+			clReleaseMemObject(alpha_buf[i]);
+		}
+		if(beta_buf && beta_buf[i]) {
+			clReleaseMemObject(beta_buf[i]);
+		}
+#endif
 	}
 
 	if(program) {
@@ -1801,12 +2488,25 @@ void cleanup()
 		clReleaseContext(context);
 	}
 
+	// Release the memory resource allocated
 	alignedFree(weights);
 	alignedFree(image);
+#ifdef RESNET
+	alignedFree(means);
+	alignedFree(var);
+	alignedFree(alpha);
+	alignedFree(beta);
+#endif
 	alignedFree(data_init);
 	for(int j=0; j<LAYER_NUM; j++){
 		alignedFree(weight_conv[j]);
 		alignedFree(bias_conv[j]);
+#ifdef RESNET
+		alignedFree(mean_conv[j]);
+		alignedFree(var_conv[j]);
+		alignedFree(alpha_conv[j]);
+		alignedFree(beta_conv[j]);
+#endif
 	}
 	alignedFree(golden_ref);
 	alignedFree(output);

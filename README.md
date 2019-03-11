@@ -4,7 +4,7 @@
 **PipeCNN** is an OpenCL-based FPGA Accelerator for Large-Scale Convolutional Neural Networks (CNNs).
 There is a growing trend among the FPGA community to utilize High Level Synthesis (HLS) tools to design
 and implement customized circuits on FPGAs. Compared with RTL-based design methodology, the HLS tools provide faster hardware development
-cycle by automatically synthesizing an algorithm in high-level languages (e.g. C/C++) to RTL/hardware. [OpenCL™](https://www.khronos.org/opencl/) is an open, emergying cross-platform parallel programming language that can be used in both GPU and FPGA developments. The main goal of this project is to provide a generic, yet efficient OpenCL-based design of CNN accelerator on FPGAs. PipeCNN utilizes ***Pipe**lined **CNN*** functional kernels to achieved improved throughput in inference computation. The design is scalable both in performance and hardware resource, and thus can be deployed on a variety of FPGA platforms.
+cycle by automatically synthesizing an algorithm in high-level languages (e.g. C/C++) to RTL/hardware. [OpenCL™](https://www.khronos.org/opencl/) is an open, emergying cross-platform parallel programming language that can be used in both GPU and FPGA developments. The main goal of this project is to provide a generic, yet efficient OpenCL-based design of CNN accelerator on FPGAs. PipeCNN utilizes ***Pipe**lined **CNN*** functional kernels to achieved improved throughput in inference computation. Our design is scalable both in performance and hardware resource, and thus can be deployed on a variety of FPGA platforms.
 
 ## How to Use
 
@@ -12,7 +12,7 @@ First, download the pre-trained CNN models, input test vectors and golden refere
 ```
 ./run.exe conv.aocx
 ```
-The ModelZoo now provides pre-quantized model for the follow networks:
+The ModelZoo now provides pre-quantized model for the following networks:
 * CaffeNet(AlexNet)
 * VGG-16
 * ResNet-50
@@ -24,7 +24,7 @@ Currently, we are using [Intel's OpenCL SDK](https://www.intel.com/content/www/u
 * Terasic's [DE5-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=179&No=727) (Stratix-V A7 FPGA)
 * Terasic's [DE10-standard](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=180&No=1105) (Cyclone-V SXC6 FPGA)
 
-For Xilinx FPGAs, our dev boards were no longer supported by the latest SDAccel tool, so there is no guarantee that the code could be successfully compiled.
+For Xilinx, our fpga boards were no longer supported by the latest SDAccel tool, so the scripts and codes are provided as is, and there is no guarantee that the code could be successfully compiled.
 
 ## Demos
 Now you can run classification on the ImageNet dataset by using PipeCNN, and measure the top-1/5 accuracy for different CNN models.
@@ -47,14 +47,17 @@ This following table lists the performance and cost information on some of the b
 
 *Note: AlexNet was used as the benchmark. Image size is 227x227x3.
 
-## Update Plans
-* Support for sparse or Winograd-based convolution algorithms.
-* Implementation of Faster-RCNN and YOLO9000.
-
 ## Citation
 Please kindly cite our work of PipeCNN if it helped your research:
 ```
 Dong Wang, Ke Xu and Diankun Jiang, “PipeCNN: An OpenCL-Based Open-Source FPGA Accelerator for Convolution Neural Networks”, FPT 2017.
+```
+
+## Further Optimizations
+Architectural and algorithm level optimizations can be conducted to further improve the performance of PipeCNN. We list a few of latest research works that are based on PipeCNN for reference:
+* Improving the throughput by introducing a new opencl-friendly sparse-convolution algorithm
+```
+Dong Wang, Ke Xu, Qun Jia and  Soheil Ghiasi, “ABM-SpConv: A Novel Approach to FPGA-Based Acceleration of Convolutional Neural Network Inference”, DAC 2019.
 ```
 
 ## Contributors

@@ -1,6 +1,10 @@
 # Revision History
 
 * 2018.02.07
+	* Update support for resnet-50.
+    * Remove support for Xilinx.
+    
+* 2018.02.07
 	* Update kernel and host programs to improve performance.
 	* Add ImageNet classification Demo.
 

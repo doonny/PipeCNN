@@ -200,17 +200,18 @@ The inference result is n02123045 tabby, tabby cat   (the prob is 56.00)
 
 ```
 
-**For Xilinx users**, you need to use Pipes to replace Channels. However, SDx does not support vectorized data type for Pipes, so you need to generate paralelled Pipe instances in a separate file "pipe.cl". To generate this file, use the script "pipe_gen.py" provided. Simply run the following command:
+**For Xilinx users**, the SDAcel tool is no longer evaluated because the latest SDK does not support our board anymore. So you need to do some modifications by yourself to make it work. Suggestions includes: 
+
+(1) use Pipes to replace Channels. However, SDx does not support vectorized data type for Pipes, so you need to generate paralelled Pipe instances in a separate file "pipe.cl". To generate this file, use the script "pipe_gen.py" provided. Simply run the following command:
 ```
 python pipe_gen.py [lane_num] [vec_size]
 ```
-After generating the correct pipe.cl file, directly run the makefile should generate everything. Before running the program, remember to set the correct enviroment by using the scripts provided.
+(2) generating the correct pipe.cl file, directly run the makefile should generate everything. The folowing scripts might help setting up the required env for execution. Please refer to SDA's user manual for more detailed information.
 * setup_sdx_hw.sh (run PipeCNN on FPGAs)
 * setup_sdx_sw_emu.sh (run software emulation)
 
-However, it is always recommanded to use the IDE enviroment rather than makefile-based flow.
 
-### Notes
+### Important Notes
 
 * Current host code only read one image file (in binary or .jpg) which is reused for each batch process.
 * If you are using ARM-based SoC FPGA devices, please change *PLATFORM = x86* in the makefile to *arm32*.
@@ -228,4 +229,4 @@ to appropriate ones. The default setting is VEC_SIZE=8, LANE_NUM=16, CONV_GP_SIZ
 **SW Configuration.** Configuration of different CNN models is done by a header file located in *host/layer_config.h*. Select one of the model configurations provided and recompile the host before running the test. Currently, the following models have been tested:
 * AlexNet (CaffeNet)
 * Vgg-16
-
+* ResNet-50
