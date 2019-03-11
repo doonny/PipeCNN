@@ -390,6 +390,11 @@ end
 fclose(fid);
 ```
 
+* For golden reference files (input/output), you will need to run fixed-point CNN forward computation in c/python/matlab for a given image. And then using the above scheme to store the outputs of each layers as the golden reference files. The following repo can be used to write such script to generate the golden reference files.
+```
+https://github.com/pmgysel/alexnet-forwardpath
+```
+
 
 ## Notes:
 

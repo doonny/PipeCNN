@@ -54,7 +54,7 @@ Dong Wang, Ke Xu and Diankun Jiang, “PipeCNN: An OpenCL-Based Open-Source FPGA
 ```
 
 ## Further Optimizations
-Architectural and algorithm level optimizations can be conducted to further improve the performance of PipeCNN. We list a few of latest research works that are based on PipeCNN for reference:
+Architectural and algorithm level optimizations can be conducted to further improve the performance of PipeCNN. We list a few latest research achievements that are based on PipeCNN for reference:
 * Improving the throughput by introducing a new opencl-friendly sparse-convolution algorithm
 ```
 Dong Wang, Ke Xu, Qun Jia and  Soheil Ghiasi, “ABM-SpConv: A Novel Approach to FPGA-Based Acceleration of Convolutional Neural Network Inference”, DAC 2019.
