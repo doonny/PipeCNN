@@ -1,6 +1,6 @@
 # Revision History
 
-* 2018.02.07
+* 2019.03.11
 	* Update support for resnet-50.
     * Remove support for Xilinx.
     

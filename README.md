@@ -64,7 +64,7 @@ Dong Wang, Ke Xu, Qun Jia and  Soheil Ghiasi, “ABM-SpConv: A Novel Approach to
 
 The following people have also contributed to this project:
 
-Diankun Jiang, [Ke Xu](https://github.com/xuke225), Qun Jia, Jianjing An, Xiaoyun Wang, Shihang Fu, Zhihong Bai.
+[Diankun Jiang](https://github.com/dkjiang2018), [Ke Xu](https://github.com/xuke225), Qun Jia, Jianjing An, Xiaoyun Wang, Shihang Fu, Zhihong Bai.
 
 ## Related Works
 There are other FPGA accelerators that also adopt HLS-based design scheme. Some brilliant works are listed as follow. Note that PipeCNN is the first, and only one that is Open-Source （￣︶￣）↗
