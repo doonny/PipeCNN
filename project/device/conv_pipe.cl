@@ -113,7 +113,7 @@ DPTYPE pool_max(DPTYPE a_in, DPTYPE b_in)
 
 // Fetch Data from Global Memory
 __kernel
-__attribute__((task))
+//__attribute__((task))
 __attribute__((max_global_work_dim(0)))
 void memRead(
 			// Params Ports
@@ -185,11 +185,13 @@ void memRead(
 			feature_idx_dim2 = win_itm_y;
 			feature_idx_dim3 = win_itm_z;
 
+			// fetch feature map for the current group and caching in win buffer
 			if((feature_idx_dim1>=padding && feature_idx_dim1<data_dim1+padding) && (feature_idx_dim2>=padding && feature_idx_dim2<data_dim2+padding)){
 
 				data_vec = bottom[data_offset*data_dim1xdim2 + feature_idx_dim3*data_dim1xdim2 + (feature_idx_dim2-padding)*data_dim1 + (feature_idx_dim1-padding)];
 			}
-			else{
+			else{ // for padding (feature_idx<padding or data_dim+padding<=feature_idx<data_dim+2*padding)
+				// or invalid work-item in the last group set feature map to zeros (feature_idx>=data_dim+2*padding)
 				#pragma unroll
 				for(unsigned char vv=0; vv<VEC_SIZE; vv++){
 					data_vec.data[vv] = CZERO;
@@ -203,6 +205,9 @@ void memRead(
 		}
 	}
 
+	// reset group virtual loop counters for winbuf loading operations
+	// the gp loop counter for winbuf starts one iteration earlier than global group virtual loop counter
+	// in this iteration, the winbuf is pre-initialized as previous loops shows
 	if(group_num_x==1 && group_num_y==1){
 		gp_num_x_winbuf = 0; // there is only one group for FC mode when batch=1
 		gp_num_y_winbuf = 0;}
@@ -221,6 +226,8 @@ void memRead(
 	out_idx_z = 0;
 
 	Group:for(unsigned int out_idx_xyz=0; out_idx_xyz<(weight_dim4_div_lane*group_num_y*group_num_x); out_idx_xyz++){
+	// The following group loops are flattened as the upper loop to improve pipeline efficiency
+	//for(unsigned short out_idx_z=0; out_idx_z<weight_dim4_div_lane; out_idx_z++){
 
 		// special case when split==1, the output feature maps depend on only half the input feature maps
 		if(split==0)
@@ -229,6 +236,9 @@ void memRead(
 			data_offset = 0;
 		else
 			data_offset = weight_dim3/VEC_SIZE;	// the upper half of the output feature maps depend on the upper half of the input
+
+		//for(unsigned short gp_num_y=0; gp_num_y<group_num_y; gp_num_y++){
+			//for(unsigned short gp_num_x=0; gp_num_x<group_num_x+1; gp_num_x++){ // add one more extra iteration for ping-pong buffering operations
 
 				flag = out_idx_xyz & 0x01; //ping-pong flag
 
@@ -246,6 +256,7 @@ void memRead(
 
 
 				if(gp_num_x==group_num_x-1) // last group in each row
+					// ensuring that both winbuf load loop and output loop are finished, i.e., use a larger value as the loop bound
 					item_loop_bound = win_size_x>=group_rem_size_x?(win_size_xyz/VEC_SIZE):(group_rem_size_xyz/VEC_SIZE);
 				else{
 					if(stride>=weight_dim1 || stride>=weight_dim2) // special case convolution layers with stride>weight_dim1/2, such as resnet50
@@ -254,9 +265,14 @@ void memRead(
 						item_loop_bound = (weight_dim1x2x3*CONV_GP_SIZE_Y*CONV_GP_SIZE_X/VEC_SIZE);
 				}
 
-				#pragma ivdep array(win_buffer)
-				#pragma ivdep array(weight_buffer)
-				Item:for(unsigned int  win_itm_xyz=0; win_itm_xyz<item_loop_bound; win_itm_xyz++){
+				//#pragma ivdep array(win_buffer)
+				//#pragma ivdep array(weight_buffer)
+                #pragma ivdep
+				for(unsigned int  win_itm_xyz=0; win_itm_xyz<item_loop_bound; win_itm_xyz++){
+				//// The following loops are flattened as the upper loop to improve pipeline efficiency
+				//for(unsigned short win_itm_z=0; win_itm_z<weight_dim3/VEC_SIZE; win_itm_z++){
+				//	for(unsigned char  win_itm_y=0; win_itm_y<weight_dim2*CONV_GP_SIZE_Y; win_itm_y++){
+				//		for(unsigned char  win_itm_x=0; win_itm_x<weight_dim1*CONV_GP_SIZE_X; win_itm_x++){
 
 							// Winbuffer loading operations
 							if(win_itm_z<weight_dim3/VEC_SIZE){
@@ -265,11 +281,13 @@ void memRead(
 								feature_idx_dim2 = win_itm_y+gp_num_y_winbuf*CONV_GP_SIZE_Y*stride;
 								feature_idx_dim3 = win_itm_z;
 
+								// fetch feature map for the current group and caching in win buffer
 								if((feature_idx_dim1>=padding && feature_idx_dim1<data_dim1+padding) && (feature_idx_dim2>=padding && feature_idx_dim2<data_dim2+padding)){
 
 									data_vec = bottom[data_offset*data_dim1xdim2 + feature_idx_dim3*data_dim1xdim2 + (feature_idx_dim2-padding)*data_dim1 + (feature_idx_dim1-padding)];
 								}
-								else{
+								else{ // for padding (feature_idx<padding or data_dim+padding<=feature_idx<data_dim+2*padding)
+									// or invalid work-item in the last group set feature map to zeros (feature_idx>=data_dim+2*padding)
 									#pragma unroll
 									for(unsigned char vv=0; vv<VEC_SIZE; vv++){
 										data_vec.data[vv] = CZERO;
@@ -304,6 +322,8 @@ void memRead(
 
 							}
 
+							// Only output data for valid convolution work-items
+							// In this version, grouping is only performed in row (x) direction
 							if(gp_num_x*CONV_GP_SIZE_X+gp_item_idx_x<conv_x){
 
 								if(output_idx_dim1==0 && output_idx_dim2==0 && output_idx_dim3==0){
@@ -357,6 +377,10 @@ void memRead(
 
 				}
 
+				//		}// end of win_itm_z
+				//	}// end of win_itm_y
+				//}// end of win_itm_x
+
 		// used as virtual group loop counters for winbuf loading operations
 		if((out_idx_z_winbuf==weight_dim4_div_lane-1) && (gp_num_y_winbuf==group_num_y-1) && (gp_num_x_winbuf==group_num_x-1))
 			out_idx_z_winbuf = 0;
@@ -390,13 +414,17 @@ void memRead(
 			gp_num_x++;
 
 
+	//			}// end of gp_num_x
+	//		}// end of gp_num_y
+	//}// end of out_idx_z
 	}
 
+	//printf("Kernel 0 lanched !!!\n");
 }
 
 
 __kernel
-__attribute__((task))
+//__attribute__((task))
 __attribute__((max_global_work_dim(0)))
 void coreConv(
 			// Params Ports
@@ -432,6 +460,7 @@ void coreConv(
 			conv_out[ll] = CZERO;
 			bias[ll] = bias_ch_out.lane[ll]; // pass to reg, avoid compile error
 
+			// initialize the deep pipelined registers which store PIPE_DEPTH copys of partial results
 			#pragma unroll
 			for(unsigned int p=0; p<PIPE_DEPTH; p++){
 				accum_piped[ll][p] = MASK_ACCUM & CZERO;
@@ -445,6 +474,7 @@ void coreConv(
 			mac_weight = read_channel_intel(weight_ch);
 
 			// add results from all lanes
+			// accumulate with the last copy
 			#pragma unroll
 			for(unsigned char ll=0; ll<LANE_NUM; ll++){
 
@@ -456,6 +486,7 @@ void coreConv(
 					accum_piped[ll][p] = MASK_ACCUM & accum_piped[ll][p-1];
 				}
 
+				// update the first copy
 				accum_piped[ll][0] = MASK_ACCUM & lane_accum[ll];
 
 				#ifdef DEBUG_CONV
@@ -475,19 +506,25 @@ void coreConv(
 				conv_out[ll] += accum_piped[ll][i];
 			}
 
+			// round and truncate the results to the output precision
 			// note: ((frac_w+frac_din)-frac_dout)) should be checked by host to be a positive number
 			if(conv_out[ll]>=0)
 				conv_sign_exten[ll] = 0x00;
 			else
 				conv_sign_exten[ll] = ~(0xFFFFFFFF>>(frac_w+frac_din-frac_dout-1)); // ">>" is logic shift, then perform sign extension manually
 
+			 // First, perform sign extension and the 1st-step rounding before sum with bias
 			conv_with_rnd_bit[ll] = (conv_sign_exten[ll] | (conv_out[ll]>>(frac_w+frac_din-frac_dout-1))) + 0x01;
 
+			// Second, deal with Overflow and Underflow cases and the 2nd rounding after sum with bias
 			if(conv_with_rnd_bit[ll]>=256)
 				conv_sum_bias[ll] = MASK9B & 0xFF; //=255
 			else if(conv_with_rnd_bit[ll]<-256)
 				conv_sum_bias[ll] = MASK9B & 0x100; //=-256
 			else
+			    // clear 1st-step rounding bit by using MASK9B
+				// then sum with bias and perform 2nd-step rounding
+				// note: (frac_w-frac_dout-1) should be checked by host to be a positive number
 				conv_sum_bias[ll] = (MASK9B & conv_with_rnd_bit[ll])+(bias[ll]>>(frac_w-frac_dout-1))+0x01;
 
 			// final truncation
@@ -523,10 +560,12 @@ void coreConv(
 		write_channel_intel(conv_ch, conv_ch_in);
 #endif
 	}// end of output loop
+	//printf("Kernel coreConv lanched !!!\n");
 }
 #ifdef RESNET
 __kernel
-__attribute__((task))
+//__attribute__((task))
+__attribute__((max_global_work_dim(0)))
 void batchNorm(
 				uint dim1xdim2,
 				uint input_num,//dim1*dim2*dim3/LANE_NUM
@@ -567,13 +606,20 @@ void batchNorm(
 			j=0;
 		}
 		
+		// #pragma unroll
 		for(unsigned char ll=0; ll<LANE_NUM;ll++){
+			// ll=part*LANE_NUM_DIV_PART_NUM+part_ll;
+			// Convert DPTYPE fixed-point to float
 			// Input data has "frac_dout" fractional bits
+			// bn_in = convert_float(conv_ch_out.lane[ll])*pow(2,-frac_dout);
 			bn_in = convert_float(conv_ch_out.lane[ll])*frac2float;
+			// top(:,:,n)=(bottom(:,:,n)-mean(n))/(variance(n).^0.5);
 			bn_out=(bn_in-mean_ch.lane[ll])*var_ch.lane[ll];
+			//top(:,:,n)=bottom(:,:,n)*alpha(n)+beta(n);
 			sc_out=bn_out*alpha_ch.lane[ll]+beta_ch.lane[ll];
 
 			// Convert float to DPTYPE fixed-point
+			// out_conver=sc_out*pow(2,frac_dout);
 			out_conver=sc_out*frac2char;
 			if(out_conver>=0)
 				out_conver=out_conver+0.5;
@@ -600,7 +646,9 @@ void batchNorm(
 		}
 		
 	write_channel_intel(batchNorm_ch, bn_ch_in);
+	//printf("Write channel item-%d is written in channel %d...\n", k, ll);
 	}
+	//printf("Kernel batchNorm lanched !!!\n");
 }
 #endif
 
@@ -608,7 +656,8 @@ void batchNorm(
 
 
 __kernel
-__attribute__((task))
+//__attribute__((task))
+__attribute__((max_global_work_dim(0)))
 void maxPool(
 		// Params Ports
 		uchar    conv_x,
@@ -695,8 +744,10 @@ void maxPool(
 				#pragma unroll
 				for(uchar ll=0; ll<LANE_NUM; ll++){
 					if( (pool_win_cnt*POOL_GP_SIZE_X*pool_stride+win_item_x) < conv_x){
+						// load global memory to shift register
 						shift_reg[ll][0] = bottom[base_addr+win_item_y*conv_x+win_item_x].lane[ll];
 
+						// fetch the data from shift register to pool
 						if((win_item_x == pool_size-1) || (win_item_cnt == pool_stride)){
 							temp_reg0[ll] = shift_reg[ll][0];
 							temp_reg1[ll] = shift_reg[ll][1];
@@ -708,6 +759,7 @@ void maxPool(
 							temp_reg1[ll] = CZERO;
 							temp_reg2[ll] = CZERO;
 						}
+						// pooling for pool size equal 3
 						if(pool_size == 3){
 							temp_reg[ll] = pool_max(temp_reg0[ll],temp_reg1[ll]);
 							temp_max[ll] = pool_max(temp_reg2[ll],temp_reg[ll]);
@@ -721,6 +773,7 @@ void maxPool(
 								pool_final[flag][win_item_s][ll] = pool_max(temp_max[ll],row_reg1[ll][win_item_s]);
 							}
 						}
+						// pooling for pool size equal 2
 						else{
 							temp_max[ll] = pool_max(temp_reg1[ll],temp_reg0[ll]);
 							if(win_item_y == 0){
@@ -762,6 +815,8 @@ void maxPool(
 
 			}
 
+			// write back result to global memoey
+			// perform vectorization in dim3 (global_z) by combining multiple DPTYPE data into lane_data type
 			if((pool_win_cnt > 0) && (item_loop_cnt < write_back_bound)){
 				if(((pool_win_cnt-1)*POOL_GP_SIZE_X+gp_final_cnt) < pool_dim1){
 					global_z = pool_group_cnt*LANE_NUM+lane_cnt;
@@ -873,6 +928,9 @@ void memWrite(
 
 	barrier(CLK_LOCAL_MEM_FENCE);
 
+	// fetch data from local buffer and write back to DDR
+	// perform vectorization in dim3 (global_z) by combining multiple DPTYPE data into lane_data type
+
 	if(pool_on == 1){
 		top_addr = group_z*out_dim1x2xbatch*LANE_NUM +(global_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*LANE_NUM + (global_x+batch_indx_dim1*out_dim1)*LANE_NUM + local_z;
 	}
@@ -882,7 +940,15 @@ void memWrite(
 		top_addr = index_z_group*out_dim1x2xbatch*VEC_SIZE + (global_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*VEC_SIZE + (global_x+batch_indx_dim1*out_dim1)*VEC_SIZE + index_z_item;
 	}
 
+	// output dim3 in current layer may be larger than next layer (the value is changed to a value of multiples of LANE_NUM to saturated the wide pipeline input)
+	// therefore, only write back the valid values without padding zeros
 	if((global_z-padd_offset)<out_dim3 && (global_z>=padd_offset)){
+		// 1. addressing expression with out batch processing is
+		// top[index_z_group*dim1*dim2*VEC_SIZE + global_y*dim1*VEC_SIZE + global_x*VEC_SIZE + index_z_item]=buffer[local_z];
+		// 2. addressing expression with batch processing (batch_size_in_dim = sqrt(batch_size)) is
+		// top[(index_z_group*out_dim2*out_dim1*batch_size_in_dim*batch_size_in_dim*VEC_SIZE + (global_y+batch_indx_dim2*out_dim2)*batch_size_in_dim*out_dim1*VEC_SIZE + (global_x+batch_indx_dim1*out_dim1)*VEC_SIZE + index_z_item] = buffer[local_z];
+		// 3. simplified addressing with reduced cost of multipliers
+		//printf("b=%d\n",index_z_group*out_dim1x2xbatch*VEC_SIZE + (global_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*VEC_SIZE + (global_x+batch_indx_dim1*out_dim1)*VEC_SIZE + index_z_item);
 
 		top[top_addr] = buffer[local_z];
 
@@ -907,7 +973,8 @@ void memWrite(
 }
 #ifdef RESNET
 __kernel
-__attribute__((task))
+//__attribute__((task))
+__attribute__((max_global_work_dim(0)))
 void eltwise(
 			uint  input_num,//dim1*dim2*dim3/VEC_SIZE
 			uchar pool_on,//only avgpool used
@@ -1018,12 +1085,13 @@ void eltwise(
 		}
 
 	}
+	//printf("Kernel eltwise lanched !!!\n");
 }
 
 #endif
 
 __kernel
-__attribute__((max_work_group_size(LRN_MAX_LOCAL_SIZE)))
+__attribute__((max_work_group_size(LRN_MAX_LOCAL_SIZE,1,1)))
 void lrn(
 			// Params Ports
 			uchar data_dim1,
@@ -1094,9 +1162,14 @@ void lrn(
 
 	// Piecewise interpolation pipeline for lrn operation (i.e., y=pwlf(x'))
 	for(unsigned char ll=0; ll<VEC_SIZE; ll++){
+		// First Step: Coefficients table looking-up
+		// Calculate x'=sum(x(k)^2) for the pwlf function, x(k)s are from adjacent featuremaps
 		lrn_reg2 = CZERO;
 		#pragma unroll
 		for(char k=-LRN_WIN_SIZE/2; k<=LRN_WIN_SIZE/2; k++){
+			// Convert DPTYPE fixed-point to float
+			// Input data has "frac_dout" fractional bits
+			// Note: current version only support frac_dout<0
 			lrn_cnvt = z_buffer[global_z*VEC_SIZE+ll+k+LRN_WIN_SIZE/2]<<(-frac_dout);
 			lrn_reg1 = convert_float(lrn_cnvt);
 			lrn_reg2 += lrn_reg1 * lrn_reg1;
@@ -1105,22 +1178,31 @@ void lrn(
 			printf("x=%f(k=%d), ", lrn_reg1, k);
 			#endif
 		}
+		// Get the exponent and mantissa of x' (assuming x'>=0)
 		convert_ptr = (int*) (&lrn_reg2);
+		// substract the bias 127 to get exponent
 		expo = (EXP_MASK & (*convert_ptr >> MAN_BITS)) - 127;
 		manti = ((*convert_ptr) & MAN_MASK); //does not include the implicit 1
 
+		// Get level-1 table item (segment) index from exponent
 		addr_1 = ((expo-EXP_STEP_MIN)>>EXP_STEP_LOG)<<MAN_INDEX_BITS;
+		// Get level-2 table item (segment) index from mantissa
 		addr_2 = (manti>>(MAN_BITS-MAN_INDEX_BITS) & MAN_INDEX_MASK)+1;
+		// Combine level-1 and level-2 table index to get true table address
 		if(expo<EXP_STEP_MIN)
 			addr = 0; // use the first segment
 		else
 			addr = addr_1+addr_2;
 
+		// Sencond Step: Perform piecewise linear interpolation
 		lrn_tmp = ((lrn_reg2-x_sample[addr])*h_inv[addr])*coef1[addr] + coef0[addr];
 
+		// Third Step: Perform lrn operation
 		lrn_cnvt2 = z_buffer[global_z*VEC_SIZE+ll+LRN_WIN_SIZE/2]<<(-frac_dout);
 		lrn_out = lrn_tmp*convert_float(lrn_cnvt2);
 
+		// Convert float to DPTYPE fixed-point
+		// Note: current version only support frac_din=0 for next layer
 		lrn_buffer[global_z*VEC_SIZE+ll] = convert_char_rte(lrn_out);
 
 		#ifdef DEBUG_LRN

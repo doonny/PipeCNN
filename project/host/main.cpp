@@ -80,6 +80,55 @@ DTYPE searchTop[1024];
 float accuracy1=0;
 float accuracy5=0;
 
+
+/*
+// Test FC only
+// Original problem size
+// File size is in num of DTYPE numbers
+#define IMAGE_FILE_SIZE   (27*27*96)
+//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
+#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
+#define CONV_NUM          4
+#define LAYER_NUM         7
+
+const char *weight_file_path = "./data/data_alex/weights.dat";
+const char *input_file_path = "./data/data_alex/lrn1.dat";
+const char *ref_file_path = "./data/data_alex/fc8.dat";
+const char *dump_file_path = "./result_dump.txt";
+*/
+
+
+/*
+// Test FC only
+// Original problem size
+// File size is in num of DTYPE numbers
+#define IMAGE_FILE_SIZE   (6*6*256)
+//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
+#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
+#define CONV_NUM          0
+#define LAYER_NUM         3
+
+const char *weight_file_path = "./data/data_alex/weights.dat";
+const char *input_file_path = "./data/data_alex/pool5.dat";
+const char *ref_file_path = "./data/data_alex/fc8.dat";
+const char *dump_file_path = "./result_dump.txt";
+*/
+
+/*
+// Test CONV only
+// Original problem size
+// File size is in num of DTYPE numbers
+#define IMAGE_FILE_SIZE   (227*227*3)
+//#define WEIGHTS_FILE_SIZE 60965224 //fc8-1000
+#define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
+#define LAYER_NUM         2
+
+const char *weight_file_path = "./data/data_alex/weights.dat";
+const char *input_file_path = "./data/data_alex/image.dat";
+const char *ref_file_path = "./data/data_alex/pool2.dat";
+const char *dump_file_path = "./result_dump.txt";
+*/
+
 #ifdef ALEXNET
 // AlexNet
 // Original problem size

@@ -14,7 +14,7 @@
  *   - v1.3 Win-Buffer-Based Implementation
  * ------------------------------------
  *
- *   Copyright (C) 2016, Institute of Information Science,
+ *   Copyright (C) 2019, Institute of Information Science,
  *   Beijing Jiaotong University. All rights reserved.
  *
  *   Licensed under the Apache License, Version 2.0 (the "License");
