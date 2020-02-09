@@ -8,7 +8,7 @@ cycle by automatically synthesizing an algorithm in high-level languages (e.g. C
 
 ## How to Use
 
-First, download the pre-trained CNN models, input test vectors and golden reference files from PipeCNN's own [ModelZoo](https://github.com/doonny/PipeCNN/tree/master/data). Place the data in the correct folder. Then, compile the project by using the Makefile provided. After finishing the compilation, simply type the following command to run PipeCNN:
+First, download the pre-trained CNN models, input test vectors and golden reference files from PipeCNN's own [ModelZoo](https://github.com/doonny/PipeCNN/blob/master/project/data/README.md). Place the data in the correct folder. Then, compile the project by using the Makefile provided. After finishing the compilation, simply type the following command to run PipeCNN:
 ```
 ./run.exe conv.aocx
 ```
