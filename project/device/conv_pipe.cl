@@ -267,7 +267,7 @@ void memRead(
 
 				//#pragma ivdep array(win_buffer)
 				//#pragma ivdep array(weight_buffer)
-                #pragma ivdep
+                //#pragma ivdep
 				for(unsigned int  win_itm_xyz=0; win_itm_xyz<item_loop_bound; win_itm_xyz++){
 				//// The following loops are flattened as the upper loop to improve pipeline efficiency
 				//for(unsigned short win_itm_z=0; win_itm_z<weight_dim3/VEC_SIZE; win_itm_z++){
@@ -715,7 +715,7 @@ void maxPool(
 	// init hierarchy counters
 	pool_y_cnt = 0;
 	pool_group_cnt = 0;
-	#pragma ivdep array(pool_final)
+	//#pragma ivdep array(pool_final)
 	for(ushort i = 0; i < pool_times; i++){
 		pool_sync = read_channel_intel(pool_sync_ch);
 		mem_fence(CLK_CHANNEL_MEM_FENCE);
@@ -730,7 +730,7 @@ void maxPool(
 		gp_final_cnt = 0;
 		lane_cnt = 0;
 
-		#pragma ivdep array(pool_final)
+		//#pragma ivdep array(pool_final)
 		for(ushort k=0; k<pool_y_bound; k++){
 			flag = pool_win_cnt & 0x01;
 			base_addr = pool_group_cnt*conv_xy + pool_stride*conv_x*pool_y_cnt + pool_stride*pool_win_cnt*POOL_GP_SIZE_X;
@@ -1091,7 +1091,7 @@ void eltwise(
 #endif
 
 __kernel
-__attribute__((max_work_group_size(LRN_MAX_LOCAL_SIZE,1,1)))
+__attribute__((max_work_group_size(1,1,LRN_MAX_LOCAL_SIZE))) // (x,y,z)
 void lrn(
 			// Params Ports
 			uchar data_dim1,

@@ -48,8 +48,14 @@ typedef  float FTYPE;
 #ifdef XILINX
 const char *vendor_name = "Xilinx";
 #else
-const char *vendor_name = "Intel";
-//const char *vendor_name = "Altera";
+//----------- SDK version <= 19.1 -----------//
+//const char *vendor_name = "Intel";
+//----------- SDK version >= 19.3 ----------//
+#if defined(SW_EMU)
+const char *vendor_name = "Intel(R) FPGA Emulation Platform for OpenCL(TM)";
+#else
+const char *vendor_name = "Intel(R) FPGA SDK for OpenCL(TM)";
+#endif
 #endif
 #define DEVICE_TYPE CL_DEVICE_TYPE_ACCELERATOR
 
@@ -335,6 +341,7 @@ void cleanup();
 int main(int argc, char** argv)
 {
 	cl_int status;
+    unsigned int device_ptr;
 
 	unsigned int conv_output_num;
 	unsigned int conv_loop_cnt;
@@ -373,25 +380,31 @@ int main(int argc, char** argv)
 		return false;
 	}
 
-	// Query the available OpenCL device
-	device.reset(getDevices(platform_id, DEVICE_TYPE, &num_devices));
-	printf("\nPlatform: %s\n", getPlatformName(platform_id).c_str());
-	printf("Using %d device(s)\n", num_devices);
-	for(unsigned i = 0; i < num_devices; ++i) {
-		printf("  Device %d: %s\n", i, getDeviceName(device[i]).c_str());
-		displayDeviceInfo(device[i]);
-	}
+    // Query the available OpenCL device
+    device.reset(getDevices(platform_id, DEVICE_TYPE, &num_devices));
+    printf("\nPlatform: %s\n", getPlatformName(platform_id).c_str());
+    printf("Totally %d device(s) are found\n", num_devices);
+#if defined(SW_EMU)
+    device_ptr = 0; // only use one device, select the proper idx
+#else
+    device_ptr = 1; // only use one device, select the proper idx
+#endif
+    num_devices = 1; // reset the num of device to 1
+    //for(unsigned device_ptr = 0; device_ptr < num_devices; ++device_ptr) {
+        printf("  Using Device %d: %s\n", device_ptr, getDeviceName(device[device_ptr]).c_str());
+        displayDeviceInfo(device[device_ptr]);
+    //}
 
 
 	// Create the context.
-	context = clCreateContext(NULL, num_devices, device, NULL, NULL, &status);
+    context = clCreateContext(NULL, num_devices, &device[device_ptr], NULL, NULL, &status);
 	checkError(status, "Failed to create context");
 
 	// Create Program Objects
 	char *kernel_file_name=argv[1];
 
 	// Create the program for all device. All devices execute the same kernel.
-	program = createProgramFromFile(context, (const char *) kernel_file_name, device, num_devices);
+    program = createProgramFromFile(context, (const char *) kernel_file_name, &device[device_ptr], num_devices);
 
 	// Create per-device objects.
 	que_memRd.reset(num_devices);
@@ -434,15 +447,15 @@ int main(int argc, char** argv)
 	// Create qeues, kernels and mem objs
 	for(unsigned i = 0; i < num_devices; ++i) {
 		// Command queue
-		que_memRd[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+		que_memRd[i] = clCreateCommandQueue(context, device[device_ptr], CL_QUEUE_PROFILING_ENABLE, &status);
 		checkError(status, "Failed to create command queue 0");
-		que_conv[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+		que_conv[i] = clCreateCommandQueue(context, device[device_ptr], CL_QUEUE_PROFILING_ENABLE, &status);
 		checkError(status, "Failed to create command queue 1");
-		que_memWr[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+		que_memWr[i] = clCreateCommandQueue(context, device[device_ptr], CL_QUEUE_PROFILING_ENABLE, &status);
 		checkError(status, "Failed to create command queue 2");
-		que_pool[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+		que_pool[i] = clCreateCommandQueue(context, device[device_ptr], CL_QUEUE_PROFILING_ENABLE, &status);
 		checkError(status, "Failed to create command queue 3");
-		que_lrn[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+		que_lrn[i] = clCreateCommandQueue(context, device[device_ptr], CL_QUEUE_PROFILING_ENABLE, &status);
 		checkError(status, "Failed to create command queue 3");
 
 
@@ -462,7 +475,7 @@ int main(int argc, char** argv)
 		knl_lrn[i] = clCreateKernel(program, knl_name_lrn, &status);
 		checkError(status, "Failed to create lrn kernel");
 #ifdef RESNET
-		que_bn[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+		que_bn[i] = clCreateCommandQueue(context, device[device_ptr], CL_QUEUE_PROFILING_ENABLE, &status);
 		checkError(status, "Failed to create command queue 4");
 		knl_bn[i] = clCreateKernel(program, knl_name_bn, &status);
 		checkError(status, "Failed to create bn kernel");
