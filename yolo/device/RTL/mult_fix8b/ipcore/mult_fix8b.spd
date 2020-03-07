@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<simPackage>
+ <file path="mult_fix8b_sim/mult_fix8b.v" type="VERILOG" />
+ <topLevel name="mult_fix8b" />
+ <deviceFamily name="stratixv" />
+</simPackage>
