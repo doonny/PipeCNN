@@ -263,11 +263,12 @@ void memRead(
 						item_loop_bound = win_size_xyz/VEC_SIZE;
 					else
 						item_loop_bound = (weight_dim1x2x3*CONV_GP_SIZE_Y*CONV_GP_SIZE_X/VEC_SIZE);
-				}
-
+               }
+               
 				//#pragma ivdep array(win_buffer)
 				//#pragma ivdep array(weight_buffer)
-                //#pragma ivdep
+				//#pragma ivdep
+				#pragma ii 1
 				for(unsigned int  win_itm_xyz=0; win_itm_xyz<item_loop_bound; win_itm_xyz++){
 				//// The following loops are flattened as the upper loop to improve pipeline efficiency
 				//for(unsigned short win_itm_z=0; win_itm_z<weight_dim3/VEC_SIZE; win_itm_z++){
@@ -708,8 +709,8 @@ void maxPool(
 	DPTYPE  temp_reg[LANE_NUM];
 	DPTYPE  temp_max[LANE_NUM];
 
-	DPTYPE  row_reg0[LANE_NUM][POOL_GP_SIZE_X]; // pooling reslut in the first line
-	DPTYPE  row_reg1[LANE_NUM][POOL_GP_SIZE_X]; // pooling reslut in the max(second line , first line)
+	DPTYPE  row_reg0[LANE_NUM][POOL_GP_SIZE_X] __attribute__((register)); // pooling reslut in the first line
+	DPTYPE  row_reg1[LANE_NUM][POOL_GP_SIZE_X] __attribute__((register)); // pooling reslut in the max(second line , first line)
 	DPTYPE  pool_final[2][POOL_GP_SIZE_X][LANE_NUM]; // final pooling reslut
 
 	// init hierarchy counters
@@ -731,6 +732,7 @@ void maxPool(
 		lane_cnt = 0;
 
 		//#pragma ivdep array(pool_final)
+        #pragma ii 1
 		for(ushort k=0; k<pool_y_bound; k++){
 			flag = pool_win_cnt & 0x01;
 			base_addr = pool_group_cnt*conv_xy + pool_stride*conv_x*pool_y_cnt + pool_stride*pool_win_cnt*POOL_GP_SIZE_X;
@@ -1014,7 +1016,7 @@ void eltwise(
 			avgPoolBuf[vv][pp]=0;
 		}
 	}
-
+    //#pragma ii 1
 	for(unsigned int j=0;j<input_num;j++)
 	{
 		#pragma unroll
