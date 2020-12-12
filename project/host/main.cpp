@@ -64,7 +64,7 @@ const char *vendor_name = "Intel(R) FPGA SDK for OpenCL(TM)";
 #define MAX_LAYER_NUM   54
 #define MAX_BATCH_SIZE  16
 
-#define IN_BUF_SIZE    256*256*128  // Note: the buffer size should be large enough to hold all temperary results
+#define IN_BUF_SIZE    256*256*128  // Note: the buffer size should be large enough to hold all temporary results
 #define OUT_BUF_SIZE   256*256*128
 #define POOL_BUF_SIZE  256*256*128
 #define FC_BUF_SIZE    32768*MAX_BATCH_SIZE
