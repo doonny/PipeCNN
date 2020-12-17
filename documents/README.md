@@ -200,7 +200,7 @@ The inference result is n02123045 tabby, tabby cat   (the prob is 56.00)
 
 ```
 
-If you want to run software emulation, please change *FLOW = hw* in the makefile to *sw_emu*, and source setup_aoc_emu.sh before running.
+If you want to run software emulation, please change *FLOW = hw* in the makefile to *sw_emu*, and remake the design. Remember to source setup_aoc_emu.sh before running.
 
 
 **For Xilinx users**, all codes are located in the project_xilinx folder. Since Xilinx Vitis has a better support for C/C++ based kernels, we have rewritten all the OpenCL codes to C/C++ coding style. Before compilation, you have to choose the desired platform and architecture in the Makefile. The default setting is for the U50 board:
@@ -211,7 +211,7 @@ CONFIG_SP := config_sp.u50
 ```
 Then select *FLOW=hw*, and simply type *make fpga* will generate a conv.xclbin file, which is the binary for Xilinx's FPGA. Then type *make host* will generate the host executable *run.exe*.
 
-For Vitis, both sw emulation and hw emulation are supported. Please select the correponding *FLOW* and remake the fpga. Use *make emu* to start emulation instead of using *./run.exe conv.xclbin*. FOr hw emulation, you might also need to set *export LIBRARY_PATH=/usr/lib/x86_64-linux-gnu* before compilation on Ubuntu machine.
+For Vitis, both sw emulation and hw emulation are supported. Please select the correponding *FLOW* and remake the fpga. Use *make emu* to start emulation instead of using *./run.exe conv.xclbin*. For hw emulation, you might also need to set *export LIBRARY_PATH=/usr/lib/x86_64-linux-gnu* before compilation on Ubuntu machine.
 
 ### Important Notes
 * Intel and Xilinx have very different design flow and Makefile settings, please read the official user's guides to see the detailed information.
