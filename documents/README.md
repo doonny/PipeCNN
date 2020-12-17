@@ -2,9 +2,9 @@
 ---
 
 ## How to run PipeCNN
-Before starting to use this project, you need to install Altera or Xilinx's OpenCL SDK toolset on a Linux desktop computer, on which a supported FPGA board is also correctly installed. Clone PipeCNN from [github](https://github.com/doonny/PipeCNN), and download the test vector and golden reference files from PipeCNN's own [ModelZoo](https://github.com/doonny/PipeCNN/tree/master/data). Put all the data files in the ./data folder.
+Before starting to use this project, you need to install Intel OpenCL SDK Pro or Xilinx's Vitis toolset on a Linux desktop computer, on which a supported FPGA board is also correctly installed. Clone PipeCNN from [github](https://github.com/doonny/PipeCNN), and download the test vector and golden reference files from PipeCNN's own ModelZoo (download links are located in the "data" folder of each project folder). Put all the data files in the ./data folder.
 
-**For Altera users**, first enter the ./RTL folder, run the makefile (simply type *make*). This would generate the necessary RTL libraries used by PipeCNN. Secondly, back to the main project folder, run the main makefile provided, and it will take around one hour to finish all the compilations. Finally, there will be two files generated as follow:
+**For Intel users**, first enter the ./project_intel/RTL folder, run the makefile (simply type *make*). This would generate the necessary RTL libraries used by PipeCNN. Secondly, back to the main project folder, run the main makefile provided, and it will take around one hour to finish all the compilations. Finally, there will be two files generated as follow:
 * *run.exe* (host executable)
 * *conv.aocx* (fpga bitstream)
 
@@ -200,22 +200,23 @@ The inference result is n02123045 tabby, tabby cat   (the prob is 56.00)
 
 ```
 
-**For Xilinx users**, the SDAcel tool is no longer evaluated because the latest SDK does not support our board anymore. So you need to do some modifications by yourself to make it work. Suggestions includes: 
+If you want to run software emulation, please change *FLOW = hw* in the makefile to *sw_emu*, and source setup_aoc_emu.sh before running.
 
-(1) use Pipes to replace Channels. However, SDx does not support vectorized data type for Pipes, so you need to generate paralelled Pipe instances in a separate file "pipe.cl". To generate this file, use the script "pipe_gen.py" provided. Simply run the following command:
-```
-python pipe_gen.py [lane_num] [vec_size]
-```
-(2) generating the correct pipe.cl file, directly run the makefile should generate everything. The folowing scripts might help setting up the required env for execution. Please refer to SDA's user manual for more detailed information.
-* setup_sdx_hw.sh (run PipeCNN on FPGAs)
-* setup_sdx_sw_emu.sh (run software emulation)
 
+**For Xilinx users**, all codes are located in the project_xilinx folder. Since Xilinx Vitis has a better support for C/C++ based kernels, we have rewritten all the OpenCL codes to C/C++ coding style. Before compilation, you have to choose the desired platform and architecture in the Makefile. The default setting is for the U50 board:
+```
+PLATFORM = x86
+DEVICE := xilinx_u50_gen3x16_xdma_201920_3
+CONFIG_SP := config_sp.u50
+```
+Then select *FLOW=hw*, and simply type *make fpga* will generate a conv.xclbin file, which is the binary for Xilinx's FPGA. Then type *make host* will generate the host executable *run.exe*.
+
+For Vitis, both sw emulation and hw emulation are supported. Please select the correponding *FLOW* and remake the fpga. Use *make emu* to start emulation instead of using *./run.exe conv.xclbin*. FOr hw emulation, you might also need to set *export LIBRARY_PATH=/usr/lib/x86_64-linux-gnu* before compilation on Ubuntu machine.
 
 ### Important Notes
-
+* Intel and Xilinx have very different design flow and Makefile settings, please read the official user's guides to see the detailed information.
 * Current host code only read one image file (in binary or .jpg) which is reused for each batch process.
-* If you are using ARM-based SoC FPGA devices, please change *PLATFORM = x86* in the makefile to *arm32*.
-* If you want to run software simulations, please change *FLOW = hw* in the makefile to *sw_emu*, and source setup_emu.sh before running.
+* If you are using ARM-based SoC FPGA devices, please change *PLATFORM = x86* in the makefile to *arm32* (intel) or *aarch64*(xilinx) and *aarch32* (xilinx).
 ---
 
 ## Configurations
@@ -227,6 +228,5 @@ python pipe_gen.py [lane_num] [vec_size]
 to appropriate ones. The default setting is VEC_SIZE=8, LANE_NUM=16, CONV_GP_SIZE_X=7 which achieves the shortest classification time on the DE5-net board. To obtain the optimal results (best performance or smallest cost), you need to perform design space explorations by implementing PipeCNN with different configurations of the three parameters, and find the one as you needed. Please refer to our acdamic papers for more detailed information.
 
 **SW Configuration.** Configuration of different CNN models is done by a header file located in *host/layer_config.h*. Select one of the model configurations provided and recompile the host before running the test. Currently, the following models have been tested:
-* AlexNet (CaffeNet)
 * Vgg-16
 * ResNet-50

@@ -1,5 +1,8 @@
 # Revision History
-
+* 2020.12.17
+	* added support for Xilinx Vitis.
+	* removed AlexNet.
+  
 * 2019.03.11
 	* Update support for resnet-50.
     * Remove support for Xilinx.

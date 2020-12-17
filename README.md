@@ -4,27 +4,35 @@
 **PipeCNN** is an OpenCL-based FPGA Accelerator for Large-Scale Convolutional Neural Networks (CNNs).
 There is a growing trend among the FPGA community to utilize High Level Synthesis (HLS) tools to design
 and implement customized circuits on FPGAs. Compared with RTL-based design methodology, the HLS tools provide faster hardware development
-cycle by automatically synthesizing an algorithm in high-level languages (e.g. C/C++) to RTL/hardware. [OpenCL™](https://www.khronos.org/opencl/) is an open, emergying cross-platform parallel programming language that can be used in both GPU and FPGA developments. The main goal of this project is to provide a generic, yet efficient OpenCL-based design of CNN accelerator on FPGAs. PipeCNN utilizes ***Pipe**lined **CNN*** functional kernels to achieved improved throughput in inference computation. Our design is scalable both in performance and hardware resource, and thus can be deployed on a variety of FPGA platforms.
+cycle by automatically synthesizing an algorithm in high-level languages (e.g. C/C++) to RTL/hardware. [OpenCL™](https://www.khronos.org/opencl/) is an open, emergying cross-platform parallel programming language that can be used in both GPU and FPGA developments. The main goal of this project is to provide a generic, yet efficient OpenCL-based design of CNN accelerator on FPGAs. PipeCNN utilizes ***Pipe**lined **CNN*** functional kernels to achieved improved throughput in inference computation. Our design is scalable both in performance and hardware resource, and thus can be deployed on a variety of FPGA platforms. PipeCNN supports both Intel OpenCL SDK and Xilinx Vitis based FPGA design flow.
 
 ## How to Use
 
-First, download the pre-trained CNN models, input test vectors and golden reference files from PipeCNN's own [ModelZoo](https://github.com/doonny/PipeCNN/blob/master/project/data/README.md). Place the data in the correct folder. Then, compile the project by using the Makefile provided. After finishing the compilation, simply type the following command to run PipeCNN:
+First, download the pre-trained CNN models, input test vectors and golden reference files from PipeCNN's own ModelZoo (instructions are located in the "data" folder inside each project folder). Place the data in the correct folder. Then, compile the project by using the Makefile provided. After finishing the compilation, simply type the following command to run PipeCNN:
 ```
 ./run.exe conv.aocx
 ```
 The ModelZoo now provides pre-quantized model for the following networks:
-* CaffeNet(AlexNet)
 * VGG-16
 * ResNet-50
 
 For more detailed instructions, please check out the [User Instructions](https://github.com/doonny/PipeCNN/tree/master/documents).
 
-## Tested Boards
-Currently, we are using [Intel's OpenCL SDK](https://www.intel.com/content/www/us/en/software/programmable/sdk-for-opencl/overview.html) v18.1 toolset for compilation of the OpenCL code and implementation of the generated RTL on Intel's FPGAs. The following boards have been tested working:
-* Terasic's [DE5-net](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=179&No=727) (Stratix-V A7 FPGA)
-* Terasic's [DE10-standard](http://www.terasic.com.cn/cgi-bin/page/archive.pl?Language=China&CategoryNo=180&No=1105) (Cyclone-V SXC6 FPGA)
+## Supported Tools
+Currently, we are using [Intel's OpenCL SDK](https://www.intel.com/content/www/us/en/software/programmable/sdk-for-opencl/overview.html) and [Xilinx Vitis](https://china.xilinx.com/products/design-tools/vitis/vitis-platform.html) tool kit to compile of the OpenCL/HLS code and implementate of the generated RTL on FPGAs. 
 
-For Xilinx, our fpga boards were no longer supported by the latest SDAccel tool, so the scripts and codes are provided as is, and there is no guarantee that the code could be successfully compiled.
+* Intel OpenCL SDK Pro v20.1
+* Xilinx Vitis 2020.1
+
+## Tested Boards
+The following boards have been tested working:
+* Terasic's DE5a-net-ddr4 (Arria-10 GX1150 FPGA)
+* Intel's Arria-10 Dev Kit (Arria-10 GX1150 FPGA)
+* Xilinx's U50 Acceleration Card (VU35P FPGA)
+* Xilinx's ZCU102 Dev Board (ZU9EG FPGA)
+* Xilinx's ZC706 Dev Board (Zynq-7045 FPGA)
+
+PipeCNN may also run on other FPGA boards, which includes Terasic's DE10-standard/DE10-nano, Intel's PAC cards, Xilinx Ultra96-v2 boards. However, due to limited time and resourse, we have not verified that yet. Please let us know if you would like to share your results on other FPGA boards.
 
 ## Demos
 Now you can run classification on the ImageNet dataset by using PipeCNN, and measure the top-1/5 accuracy for different CNN models.
@@ -42,18 +50,15 @@ This following table lists the performance and cost information on some of the b
 
 | Boards     | Excution Time* | Batch Size | DSP Consumed |  Frequency|
 | :--------: |--------------:| ----------:| ------------:|----------:|
-| DE1-standard    |         -- |          -- |            --|     --|
-| DE5-net    |          15ms |         16 |           228|     206MHz|
+| DE5a-net-ddr4    |          -- |         -- |           --|     --|
 
-*Note: AlexNet was used as the benchmark. Image size is 227x227x3.
+*Note: ResNet-50 was used as the benchmark. Image size is 227x227x3.
 
 ## Citation
 Please kindly cite our work of PipeCNN if it helped your research:
 ```
 Dong Wang, Ke Xu and Diankun Jiang, “PipeCNN: An OpenCL-Based Open-Source FPGA Accelerator for Convolution Neural Networks”, FPT 2017.
 ```
-
-## Further Optimizations
 Architectural and algorithm level optimizations can be conducted to further improve the performance of PipeCNN. We list a few latest research achievements that are based on PipeCNN for reference:
 * Improving the throughput by introducing a new opencl-friendly sparse-convolution algorithm
 ```
@@ -64,7 +69,10 @@ Dong Wang, Ke Xu, Qun Jia and  Soheil Ghiasi, “ABM-SpConv: A Novel Approach to
 
 The following people have also contributed to this project:
 
-[Diankun Jiang](https://github.com/dkjiang2018), [Ke Xu](https://github.com/xuke225), Qun Jia, Jianjing An, Xiaoyun Wang, Shihang Fu, Zhihong Bai.
+[Diankun Jiang](https://github.com/dkjiang2018), [Ke Xu](https://github.com/xuke225), Qun Jia, Jianjing An, Xiaoyun Wang, Shihang Fu, Zhihong Bai, Dezheng Zhang.
+
+## Research Opportunity
+Our Research Lab is also looking for outstanding students who are interested in designing hardware accelerator for deep-learning algorithms on FPGAs. Please send me a e-mail if you are interested.
 
 ## Related Works
 There are other FPGA accelerators that also adopt HLS-based design scheme. Some brilliant works are listed as follow. Note that PipeCNN is the first, and only one that is Open-Source （￣︶￣）↗
