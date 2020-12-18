@@ -1285,24 +1285,10 @@ int main(int argc, char** argv)
 
 
 			// kernel memWr
-			knl_memWr_global_size[0] = memWr_dim1;
-			knl_memWr_global_size[1] = memWr_dim2;
-			knl_memWr_global_size[2] = layer_config[j][weight_m]; // pool_z equals original weight_m, new weight_m is divisible by LANE_NUM
-			knl_memWr_local_size[0] = 1;
-			knl_memWr_local_size[1] = 1;
-			knl_memWr_local_size[2] = LANE_NUM;
-
 			if(k == 0&&pic_num==1)
-				printf("\nLaunching kernel MemWr with local size: %d, %d, %d  (global size: %d, %d, %d)\n",
-									(int)knl_memWr_local_size[0], (int)knl_memWr_local_size[1], (int)knl_memWr_local_size[2],
-									(int)knl_memWr_global_size[0], (int)knl_memWr_global_size[1], (int)knl_memWr_global_size[2]);
-#ifdef XILINX
-			status = clEnqueueTask(que_memWr[i], knl_memWr[i], 0, NULL, &memWr_event[i]);
-#else // IntelFPGA
-			status = clEnqueueNDRangeKernel(que_memWr[i], knl_memWr[i], 3, NULL, knl_memWr_global_size, knl_memWr_local_size, 0, NULL, &memWr_event[i]);
-			//status = clEnqueueTask(que_memWr[i], knl_memWr[i], 0, NULL, &memWr_event[i]);
+				printf("\nLaunching single work-item kernel MemWr\n");
 
-#endif
+			status = clEnqueueTask(que_memWr[i], knl_memWr[i], 0, NULL, &memWr_event[i]);
 			checkError(status, "Failed to launch kernel memWr");
 
 			if(layer_config[j][pool_on]==1){
