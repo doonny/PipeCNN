@@ -354,8 +354,6 @@ int main(int argc, char** argv)
 
 	unsigned int weight_buf_size;
 
-	size_t knl_memWr_global_size[3];
-	size_t knl_memWr_local_size[3];
 	size_t knl_lrn_global_size[3];
 	size_t knl_lrn_local_size[3];
 

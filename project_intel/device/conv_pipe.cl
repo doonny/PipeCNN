@@ -155,12 +155,12 @@ void memRead(
 	// virtual loop counters
 	ushort gp_num_x, gp_num_y, out_idx_z;
 	ushort gp_num_x_winbuf, gp_num_y_winbuf, out_idx_z_winbuf;
-	uchar  output_idx_dim1, output_idx_dim2;
-	ushort output_idx_dim3;
+	uchar  output_idx_dim1=0, output_idx_dim2=0;
+	ushort output_idx_dim3=0;
 	uchar  win_itm_x, win_itm_y;
 	ushort win_itm_z;
 
-	uchar  gp_item_idx_x;
+	uchar  gp_item_idx_x=0;
 
 	ushort feature_idx_dim1, feature_idx_dim2;
 	ushort feature_idx_dim3;
@@ -170,6 +170,7 @@ void memRead(
 	uchar  flag; // ping-pong flag
 
 	uchar  load_weight_flag = 1;
+	uchar  load_feature_flag = 1;
 
 	// Ping-pong buffer
 	__local lane_data    win_buffer[2][WIN_BUF_SIZE]; // working sequence 0->1->0->1 ...
@@ -177,9 +178,9 @@ void memRead(
 	__local channel_vec  weight_buffer[WEIGHT_BUF_SIZE];
 
 	// Initialize the winbuf with the data in the first iteration of the group looping (as gp_num_x_winbuf=0, gp_num_y_winbuf=0)
-	for(unsigned short win_itm_z=0; win_itm_z<weight_dim3/VEC_SIZE; win_itm_z++){
-		for(unsigned char  win_itm_y=0; win_itm_y<win_size_y; win_itm_y++){
-			for(unsigned char  win_itm_x=0; win_itm_x<win_size_x; win_itm_x++){
+	for(win_itm_z=0; win_itm_z<weight_dim3/VEC_SIZE; win_itm_z++){
+		for(win_itm_y=0; win_itm_y<win_size_y; win_itm_y++){
+			for(win_itm_x=0; win_itm_x<win_size_x; win_itm_x++){
 
 			feature_idx_dim1 = win_itm_x;
 			feature_idx_dim2 = win_itm_y;
@@ -202,7 +203,7 @@ void memRead(
 			}
 		}
 	}
-
+	win_itm_x = 0; win_itm_y = 0; win_itm_z = 0;
 	// reset group virtual loop counters for winbuf loading operations
 	// the gp loop counter for winbuf starts one iteration earlier than global group virtual loop counter
 	// in this iteration, the winbuf is pre-initialized as previous loops shows
@@ -256,29 +257,15 @@ void memRead(
 				data_offset = weight_dim3/VEC_SIZE;	// the upper half of the output feature maps depend on the upper half of the input
 
 			flag = out_idx_xyz & 0x01; //ping-pong flag
-
-			// reset output loop counters
-			output_idx_dim1 = 0;
-			output_idx_dim2 = 0;
-			output_idx_dim3 = 0;
-			// reset in-group item counters
-			gp_item_idx_x = 0;
-
-			// reset input winbuffer loop counters
-			win_itm_x = 0;
-			win_itm_y = 0;
-			win_itm_z = 0;
-
-
+			load_feature_flag = 1;
 			if(gp_num_x==group_num_x-1) // last group in each row
 				// ensuring that both winbuf load loop and output loop are finished, i.e., use a larger value as the loop bound
 				item_loop_bound = ItemLastLoopBound;
 			else{
 				item_loop_bound = ItemLoopBound;
 			}
-			conv_x_idx = 0;
 		}
-               
+		
 		//Item:for(unsigned int  win_itm_xyz=0; win_itm_xyz<item_loop_bound; win_itm_xyz++){
 		//The following THREE loops are flattened as the upper "Item" loop to improve pipeline efficiency.
 		//    moreover, the "Item" loop is further merged with the "Group" loop.
@@ -286,7 +273,7 @@ void memRead(
 			//for(unsigned char  win_itm_y=0; win_itm_y<weight_dim2*CONV_GP_SIZE_Y; win_itm_y++){
 				//for(unsigned char  win_itm_x=0; win_itm_x<weight_dim1*CONV_GP_SIZE_X; win_itm_x++){
 					// Winbuffer loading operations
-					if(win_itm_z<weight_dim3/VEC_SIZE){
+					if(load_feature_flag==1){
 
 						feature_idx_dim1 = win_itm_x+gp_num_x_winbuf*CONV_GP_SIZE_X*stride;
 						feature_idx_dim2 = win_itm_y+gp_num_y_winbuf*CONV_GP_SIZE_Y*stride;
@@ -307,9 +294,16 @@ void memRead(
 						win_buffer[(~flag)&0x01][win_itm_z*win_size_y*win_size_x + win_itm_y*win_size_x + win_itm_x] = data_vec;
 
 						// used as loop counters
+						if((win_itm_z==weight_dim3/VEC_SIZE-1) && (win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1)){
+							win_itm_z = 0;
+							load_feature_flag = 0;
+						}
+						else if((win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1)){
+							win_itm_z++;
+						}
+
 						if((win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1)){
 							win_itm_y = 0;
-							win_itm_z++;
 						}
 						else if(win_itm_x==win_size_x-1)
 							win_itm_y++;
@@ -328,7 +322,7 @@ void memRead(
 
 					// Only output data for valid convolution work-items
 					// In this version, grouping is only performed in row (x) direction
-					if(conv_x_idx<conv_x){
+					if(gp_num_x*CONV_GP_SIZE_X+gp_item_idx_x<conv_x){
 
 						if(output_idx_dim1==0 && output_idx_dim2==0 && output_idx_dim3==0){
 							if(load_weight_flag==1){
@@ -362,10 +356,15 @@ void memRead(
 						#endif
 
 						// used as output loop counters
+						if(((gp_num_x*CONV_GP_SIZE_X+gp_item_idx_x==conv_x-1) || (gp_item_idx_x==CONV_GP_SIZE_X-1)) && (output_idx_dim3==weight_dim3/VEC_SIZE-1) && (output_idx_dim2==weight_dim2-1) && (output_idx_dim1==weight_dim1-1)){
+							gp_item_idx_x=0;
+						}
+						else if((output_idx_dim3==weight_dim3/VEC_SIZE-1) && (output_idx_dim2==weight_dim2-1) && (output_idx_dim1==weight_dim1-1)){
+							gp_item_idx_x++;
+						}
+
 						if((output_idx_dim3==weight_dim3/VEC_SIZE-1) && (output_idx_dim2==weight_dim2-1) && (output_idx_dim1==weight_dim1-1)){
 							output_idx_dim3 = 0;
-							gp_item_idx_x++;
-							conv_x_idx++;
 							load_weight_flag = 0;
 						}
 						else if((output_idx_dim2==weight_dim2-1)&& (output_idx_dim1==weight_dim1-1))
@@ -388,7 +387,7 @@ void memRead(
 				
 		if(item_loop_cnt == item_loop_bound-1){//one group is finished
 			item_loop_cnt = 0;
-			out_idx_xyz++;				
+			out_idx_xyz++;
 			// used as virtual group loop counters for winbuf loading operations
 			if((out_idx_z_winbuf==weight_dim4_div_lane-1) && (gp_num_y_winbuf==group_num_y-1) && (gp_num_x_winbuf==group_num_x-1))
 				out_idx_z_winbuf = 0;
