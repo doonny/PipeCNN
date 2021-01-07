@@ -46,10 +46,10 @@
 #include "hls_stream.h"
 #endif
 
-//choose net
-// #define RESNET
-// #define ALEXNET
-#define VGG16
+//choose network in the Makefile instead !!!
+//#define RESNET
+//#define ALEXNET
+//#define VGG16
 //#define TEST_CASE_1
 //#define TEST_CASE_2
 

@@ -13,6 +13,12 @@ ABS_COMMON_REPO = $(shell readlink -f $(HOST_INCS))
 #if you are loading images from OpenCV interfaces please set to 1
 USE_OPENCV = 0
 
+#select which network to compile
+CNN_TYPE = VGG16
+#CNN_TYPE = RESNET
+#CNN_TYPE = TEST_CASE_1
+#CNN_TYPE = TEST_CASE_1
+
 #set source and target for device
 #select the host archecture  x86|aarch32|aarch64
 PLATFORM = x86
@@ -67,8 +73,10 @@ KERNEL_OBJS += $(TEMP_DIR)/memRead.xo
 KERNEL_OBJS += $(TEMP_DIR)/coreConv.xo
 KERNEL_OBJS += $(TEMP_DIR)/memWrite.xo
 KERNEL_OBJS += $(TEMP_DIR)/maxPool.xo
+ifeq ($(CNN_TYPE), RESNET50)
 KERNEL_OBJS += $(TEMP_DIR)/eltwise.xo
 KERNEL_OBJS += $(TEMP_DIR)/batchNorm.xo
+endif
 PACKAGE_OUT = ./sd_card
 
 #set the device binary name
@@ -103,7 +111,7 @@ endif
 ifeq ($(USE_OPENCV),1)
 CXXFLAGS = -g -Wall -std=c++11 -DUSE_OPENCV -DCL_TARGET_OPENCL_VERSION=120
 else
-CXXFLAGS = -Wall -O0 -g -std=c++11 -fmessage-length=0 -DXILINX -DCL_TARGET_OPENCL_VERSION=120
+CXXFLAGS = -Wall -O0 -g -std=c++11 -fmessage-length=0 -DXILINX -DCL_TARGET_OPENCL_VERSION=120 -D$(CNN_TYPE)
 endif
 
 # Definition of include file locations
@@ -136,7 +144,7 @@ OCCFLAGS = -t $(FLOW) --platform $(DEVICE) --save-temps -g
 endif
 
 ifeq ($(PROFILE_ON),1)
-OCCFLAGS += --profile_kernel data:all:all:all
+OCCFLAGS += --profile_kernel data:all:all:all --profile_kernel stall:all:all:all --define $(CNN_TYPE)
 endif
 
 gen_run_app:

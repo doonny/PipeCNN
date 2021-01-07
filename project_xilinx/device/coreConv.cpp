@@ -50,7 +50,6 @@ MACTYPE mac(lane_data input, lane_data weights)
 
     MACTYPE output = MASK_MULT & CZERO;
 
-    //__attribute__((opencl_unroll_hint))
     for(int i=0; i<VEC_SIZE; i++) {
 		#pragma HLS unroll
         output += input.data[i]*weights.data[i];
@@ -89,15 +88,20 @@ void coreConv(
     DPTYPE  bias[LANE_NUM];
     MACTYPE conv_acc[LANE_NUM];
     MACTYPE lane_accum[LANE_NUM];
-    MACTYPE accum_piped[LANE_NUM][PIPE_DEPTH];// __attribute__((xcl_array_partition(complete,1))) ;
+    MACTYPE accum_piped[LANE_NUM][PIPE_DEPTH];
+    #pragma HLS ARRAY_PARTITION variable=accum_piped dim=0 complete
     MACTYPE conv_sign_exten[LANE_NUM];
     MACTYPE conv_with_rnd_bit[LANE_NUM];
     MACTYPE conv_sum_bias[LANE_NUM];
     DPTYPE  conv_final[LANE_NUM];
 
-    // each iteration generates one output
+	int conv_inner_cnt = 0;// loop index within one conv kernel, for example a 3*3*1024 conv kernel, the conv_inner_cnt should between 0 and 3*3*1024/VEC_SIZE
 
-    loop1:for(unsigned int k=0; k<output_num; k++){
+	// conv_loop_cnt iterations generate one 1x1xLANE_NUM output pixels, 
+	for(unsigned int k=0; k<output_num*conv_loop_cnt; k++){
+	//The "OutputNum" and "ConvLppo", loops are merged to improve pipeline efficiency.
+    //OutputNum:for(unsigned int k=0; k<output_num; k++){
+   		if(conv_inner_cnt == 0){//starting a new conv kernel    
 		bias_in_tmp = bias_in.read();
 		for(unsigned char ll=0; ll<LANE_NUM; ll++){
 			#pragma HLS unroll
@@ -105,22 +109,19 @@ void coreConv(
 		}
         //bias_ch_read_pipe_block(bias_ch_out);
 
-		//__attribute__((opencl_unroll_hint))
 		for(unsigned char ll=0; ll<LANE_NUM; ll++){
 			#pragma HLS unroll
-			conv_acc[ll] = CZERO;
 			bias[ll] = bias_ch_out.lane[ll]; // pass to reg, avoid compile error
 
 			// initialize the deep pipelined registers which store PIPE_DEPTH copys of partial results
-			//__attribute__((opencl_unroll_hint))
 			for(unsigned int p=0; p<PIPE_DEPTH; p++){
 				#pragma HLS unroll
 				accum_piped[ll][p] = MASK_ACCUM & CZERO;
 			}
 		}
+        }
 
-        loop2:for(int j=0; j<conv_loop_cnt; j++){
-
+        //ConvLppo:for(int j=0; j<conv_loop_cnt; j++){//1x1xLANE_NUM conv output will be generated ones this loop is finished
             // load data and weights for each lane
 			data_in_tmp = data_in.read();
 			weight_in_tmp = weight_in.read();
@@ -137,14 +138,12 @@ void coreConv(
 
 			// add results from all lanes
 			// accumulate with the last copy
-            //__attribute__((opencl_unroll_hint))
             for(unsigned char ll=0; ll<LANE_NUM; ll++){
 				#pragma HLS unroll
 
                 lane_accum[ll] = (MASK_ACCUM & accum_piped[ll][PIPE_DEPTH-1]) + (MASK_MULT & mac(mac_data.lane[ll], mac_weight.lane[ll]));
 
                 // Shift the pipelined registers backwards
-                //__attribute__((opencl_unroll_hint))
                 for(unsigned int p=PIPE_DEPTH-1; p>0; p-- ){
 					#pragma HLS unroll
                     accum_piped[ll][p] = MASK_ACCUM & accum_piped[ll][p-1];
@@ -159,14 +158,13 @@ void coreConv(
                 //}
                 #endif
             }
-        }// end of conv loop
+        //}// end of ConvLppo
 
-        //__attribute__((opencl_unroll_hint))
+	if(conv_inner_cnt == conv_loop_cnt-1){//One ConvLoop is finished, and 1x1xLANE_NUM conv output is generated. Then the bias and rounding operation is performed.
         for(unsigned char ll=0; ll<LANE_NUM; ll++){
 			#pragma HLS unroll
-
+			conv_acc[ll] = CZERO;
             // accumulate all the partial results
-            //__attribute__((opencl_unroll_hint))
             for(unsigned i=0; i<PIPE_DEPTH; i++){
 				#pragma HLS unroll
                 conv_acc[ll] += accum_piped[ll][i];
@@ -242,7 +240,13 @@ void coreConv(
 		conv_out.write(conv_out_tmp);
         //conv_ch_write_pipe_block(conv_ch_in);
 #endif
-    }// end of output loop
+		conv_inner_cnt = 0;//one conv kernel is finished, reset counter
+	}//Bias and rounding operation is finished.
+	else{//One conv kernel is not finished, continued.
+		conv_inner_cnt++;
+	}
+    //}// end of output loop
+    }// end of merged loop
     //printf("Kernel coreConv lanched !!!\n");
 }
 }

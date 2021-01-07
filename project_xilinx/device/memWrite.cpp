@@ -84,22 +84,30 @@ void memWrite(
 	k2k_data_xlane conv_in_tmp;
 	k2k_sync       pool_sync_tmp;
 
-    channel_scal output;// __attribute__((xcl_data_pack(output)));
-    DPTYPE buffer[LANE_NUM];// __attribute__((xcl_array_partition(complete,1)));
-    for(unsigned int loop_z=0; loop_z<out_dim3/LANE_NUM; loop_z++) {
-        for(unsigned int loop_y=0; loop_y<out_dim2; loop_y++) {
-            for(unsigned int loop_x=0; loop_x<out_dim1; loop_x++) {
-                for(unsigned int loop=0; loop<LANE_NUM; loop++) {
+    channel_scal output;
+    DPTYPE buffer[LANE_NUM];
+	#pragma HLS ARRAY_PARTITION variable=buffer dim=1 complete
 
-                    if(loop==0) {
-						#ifdef RESNET
+	ushort out_idx_x = 0;
+	ushort out_idx_y = 0;
+	uchar  lane_item_idx = 0; //index within one LANE, between [0, LANE_NUM-1]
+	ushort lane_num_idx = 0;  //index of which LANE, between [0, conv_out_dim3/LANE_NUM-1], NOTE: conv_out_dim3 includes the LANE padding.
+	
+	for(unsigned int i=0; i<(out_dim1*out_dim2*(out_dim3+2*padd_offset)); i++) {
+	//The following loops are merged
+    //for(unsigned int loop_z=0; loop_z<out_dim3/LANE_NUM; loop_z++) {
+    //    for(unsigned int loop_y=0; loop_y<out_dim2; loop_y++) {
+    //        for(unsigned int loop_x=0; loop_x<out_dim1; loop_x++) {
+    //            for(unsigned int loop=0; loop<LANE_NUM; loop++) {
+					//The begining of receiving one lane data
+                    if(lane_item_idx==0) {
+#ifdef RESNET
 							if(bypass==0){//bypass==0,bn
 								// for ResNet padding
-								if((pool_on == 1) && ((loop_y >= out_dim2-pool_pad) || ((loop_x >= out_dim1-pool_pad)))){
-										//__attribute__((opencl_unroll_hint))
+								if((pool_on == 1) && ((out_idx_y >= out_dim2-pool_pad) || ((out_idx_x >= out_dim1-pool_pad)))){
 										for(uchar ll=0; ll<LANE_NUM; ll++){
 											#pragma HLS unroll
-											output.lane[ll]=CZERO;
+											output.lane[ll]=-128;
 										}
 								}
 								else{
@@ -119,40 +127,36 @@ void memWrite(
 								}
 								//bypass_bn_ch_read_pipe_block(output);
 							}
-						#else
+#else
 							conv_in_tmp = conv_in.read();
 							for(unsigned char ll=0; ll<LANE_NUM; ll++){
 								#pragma HLS unroll
 								output.lane[ll] = conv_in_tmp.data(ll*DP_WIDTH+DP_WIDTH-1, ll*DP_WIDTH);
 							}
 							//conv_ch_read_pipe_block(output);
-						#endif
+#endif
 						
 						// store the vectorized output into local buffer
-						//__attribute__((opencl_unroll_hint))
 						for(uchar ll=0; ll<LANE_NUM; ll++){
 							#pragma HLS unroll
 							buffer[ll]=output.lane[ll];
 						}
-                    }
-
-					//barrier(CLK_LOCAL_MEM_FENCE);
+                	}
 
 					// fetch data from local buffer and write back to DDR
 					// perform vectorization in dim3 (global_z) by combining multiple DPTYPE data into lane_data type
-
 					if(pool_on == 1){
-							top_addr = loop_z*out_dim1x2xbatch*LANE_NUM +(loop_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*LANE_NUM + (loop_x+batch_indx_dim1*out_dim1)*LANE_NUM + loop;
-						}
+						top_addr = lane_num_idx*out_dim1x2xbatch*LANE_NUM +(out_idx_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*LANE_NUM + (out_idx_x+batch_indx_dim1*out_dim1)*LANE_NUM + lane_item_idx;
+					}
 					else{
-							index_z_group = (loop_z*LANE_NUM+loop-padd_offset)/VEC_SIZE;
-							index_z_item  = (loop_z*LANE_NUM+loop-padd_offset)%VEC_SIZE;
-							top_addr = index_z_group*out_dim1x2xbatch*VEC_SIZE + (loop_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*VEC_SIZE + (loop_x+batch_indx_dim1*out_dim1)*VEC_SIZE + index_z_item;
-						}
+						index_z_group = (lane_num_idx*LANE_NUM+lane_item_idx-padd_offset)/VEC_SIZE;
+						index_z_item  = (lane_num_idx*LANE_NUM+lane_item_idx-padd_offset)%VEC_SIZE;
+						top_addr = index_z_group*out_dim1x2xbatch*VEC_SIZE + (out_idx_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*VEC_SIZE + (out_idx_x+batch_indx_dim1*out_dim1)*VEC_SIZE + index_z_item;
+					}
 
 					// output dim3 in current layer may be larger than next layer (the value is changed to a value of multiples of LANE_NUM to saturated the wide pipeline input)
 					// therefore, only write back the valid values without padding zeros
-					if((loop_z*LANE_NUM+loop-padd_offset)<out_dim3 && (loop_z*LANE_NUM+loop>=padd_offset)){
+					if((lane_num_idx*LANE_NUM+lane_item_idx-padd_offset)<out_dim3 && (lane_num_idx*LANE_NUM+lane_item_idx>=padd_offset)){
 						// 1. addressing expression with out batch processing is
 						// top[index_z_group*dim1*dim2*VEC_SIZE + global_y*dim1*VEC_SIZE + global_x*VEC_SIZE + index_z_item]=buffer[local_z];
 						// 2. addressing expression with batch processing (batch_size_in_dim = sqrt(batch_size)) is
@@ -160,18 +164,16 @@ void memWrite(
 						// 3. simplified addressing with reduced cost of multipliers
 						//printf("b=%d\n",index_z_group*out_dim1x2xbatch*VEC_SIZE + (global_y+batch_indx_dim2*out_dim2)*out_dim1xbatch*VEC_SIZE + (global_x+batch_indx_dim1*out_dim1)*VEC_SIZE + index_z_item);
 
-						top[top_addr] = buffer[loop];
+						top[top_addr] = buffer[lane_item_idx];
 						#ifdef DEBUG_MEMWR
 						//if((global_z-padd_offset) == 0){
 							//for(unsigned char ll=0; ll<LANE_NUM; ll++){
-							printf("MemWr results= %f (x=%d, y=%d, z=%d, ll=%d)\n", (float)output.lane[0], loop_x, loop_y, loop_z*LANE_NUM+loop, 0);
+							printf("MemWr results= %f (x=%d, y=%d, z=%d, ll=%d)\n", (float)output.lane[0], out_idx_x, out_idx_y, lane_num_idx*LANE_NUM+lane_item_idx, 0);
 							//}
 						//	}
 						#endif
 
 					}
-
-					//barrier(CLK_LOCAL_MEM_FENCE);
 
 					//if(pool_on == 1){
 					//	if((loop_x==out_dim1-1)&&(loop_y > 0)&&((loop_y-pool_size+1)%2 == 0)&&(loop ==LANE_NUM-1)){
@@ -181,9 +183,29 @@ void memWrite(
 					//	}
 					//}
 
-                }
-            }
-        }
-    }
+        			if((lane_num_idx==(out_dim3+2*padd_offset)/LANE_NUM-1) && (out_idx_y==out_dim2-1) && (out_idx_x==out_dim1-1) && (lane_item_idx==LANE_NUM-1))
+        			    lane_num_idx = 0;
+        			else if((out_idx_y==out_dim2-1) && (out_idx_x==out_dim1-1) && (lane_item_idx==LANE_NUM-1))
+        			    lane_num_idx++;
+
+        			if((out_idx_y==out_dim2-1) && (out_idx_x==out_dim1-1) && (lane_item_idx==LANE_NUM-1))
+        			    out_idx_y = 0;
+        			else if((out_idx_x==out_dim1-1) && (lane_item_idx==LANE_NUM-1))
+        			    out_idx_y++;
+					
+        			if((out_idx_x==out_dim1-1) && (lane_item_idx==LANE_NUM-1))
+        			    out_idx_x = 0;
+        			else if(lane_item_idx==LANE_NUM-1)
+        			    out_idx_x++;
+
+        			if(lane_item_idx==LANE_NUM-1)
+        			    lane_item_idx = 0;
+        			else
+        			    lane_item_idx++;
+    //            }
+    //        }
+    //    }
+    //}
+	}// end of merged loop
 }
 }
