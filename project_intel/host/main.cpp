@@ -385,7 +385,7 @@ int main(int argc, char** argv)
 #if defined(SW_EMU)
     device_ptr = 0; // only use one device, select the proper idx
 #else
-    device_ptr = 1; // only use one device, select the proper idx
+    device_ptr = 0; // only use one device, select the proper idx
 #endif
     num_devices = 1; // reset the num of device to 1
     //for(unsigned device_ptr = 0; device_ptr < num_devices; ++device_ptr) {
