@@ -8,7 +8,7 @@ http://pan.baidu.com/s/1jIl6qkm
 ```
 * GoogleDrive:
 ```
-https://drive.google.com/open?id=0B3srpZY5rHcASEhSSmh3Tm5LclU
+https://drive.google.com/drive/folders/0B3srpZY5rHcASEhSSmh3Tm5LclU?resourcekey=0-RIzIu_hSmEM_w9WLYIhTWQ&usp=sharing
 ```
 
 ## Fixed-Point CNN models
